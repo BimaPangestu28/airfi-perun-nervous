@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Host Dashboard - AirFi</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <style>
+        .dashboard {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+        .dashboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1.5rem;
+        }
+        .dashboard-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        .wallet-info {
+            text-align: right;
+        }
+        .wallet-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+        .wallet-address {
+            font-family: monospace;
+            font-size: 0.875rem;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .stat-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+        }
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text);
+        }
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 1.5rem;
+        }
+        @media (max-width: 768px) {
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+        .qr-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+        }
+        .qr-card h3 {
+            margin-bottom: 1rem;
+            font-size: 1rem;
+        }
+        .qr-container {
+            display: inline-block;
+            padding: 1rem;
+            background: white;
+            border-radius: 8px;
+        }
+        .qr-url {
+            margin-top: 1rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            word-break: break-all;
+        }
+        .sessions-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+        .sessions-card h3 {
+            margin-bottom: 1rem;
+            font-size: 1rem;
+        }
+        .sessions-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .sessions-table th,
+        .sessions-table td {
+            text-align: left;
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .sessions-table th {
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+        .sessions-table td {
+            font-size: 0.875rem;
+        }
+        .sessions-table .mono {
+            font-family: monospace;
+            font-size: 0.8rem;
+        }
+        .status-active {
+            color: var(--success);
+        }
+        .status-ended {
+            color: var(--text-muted);
+        }
+        .events-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 1.5rem;
+        }
+        .events-card h3 {
+            margin-bottom: 1rem;
+            font-size: 1rem;
+        }
+        .events-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .event-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.875rem;
+        }
+        .event-item:last-child {
+            border-bottom: none;
+        }
+        .event-time {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            font-family: monospace;
+        }
+        .event-type {
+            font-weight: 500;
+        }
+        .event-type.payment {
+            color: var(--success);
+        }
+        .event-type.ended {
+            color: var(--text-muted);
+        }
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+        }
+        .logout-btn {
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .logout-btn:hover {
+            background: var(--border);
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <header class="dashboard-header">
+            <div class="dashboard-title">AirFi Host Dashboard</div>
+            <div style="display: flex; align-items: center; gap: 1.5rem;">
+                <div class="wallet-info">
+                    <div class="wallet-label">Host Wallet</div>
+                    <div class="wallet-address" id="wallet-address">Loading...</div>
+                </div>
+                <a href="/dashboard/logout" class="logout-btn">Logout</a>
+            </div>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="stat-active">0</div>
+                <div class="stat-label">Active Sessions</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-total">0</div>
+                <div class="stat-label">Total Sessions</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="stat-earned">0 CKB</div>
+                <div class="stat-label">Total Earned</div>
+            </div>
+        </div>
+
+        <div class="grid-2">
+            <div class="qr-card">
+                <h3>Guest Portal</h3>
+                <div id="portal-qr" class="qr-container"></div>
+                <div class="qr-url" id="portal-url"></div>
+            </div>
+
+            <div class="sessions-card">
+                <h3>Sessions</h3>
+                <table class="sessions-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Guest</th>
+                            <th>Balance</th>
+                            <th>Spent</th>
+                            <th>Remaining</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sessions-body">
+                        <tr>
+                            <td colspan="6" class="empty-state">No sessions yet</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="events-card">
+            <h3>Recent Events</h3>
+            <div class="events-list" id="events-list">
+                <div class="empty-state">No events yet</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let lastSessionCount = 0;
+        let events = [];
+
+        async function init() {
+            // Get wallet address
+            try {
+                const resp = await fetch('/api/v1/wallet');
+                const data = await resp.json();
+                document.getElementById('wallet-address').textContent = truncateAddress(data.address, 20);
+            } catch (e) {
+                document.getElementById('wallet-address').textContent = 'Error loading';
+            }
+
+            // Generate QR for guest portal
+            const portalUrl = window.location.origin;
+            document.getElementById('portal-url').textContent = portalUrl;
+            new QRCode(document.getElementById('portal-qr'), {
+                text: portalUrl,
+                width: 200,
+                height: 200,
+                colorDark: '#000000',
+                colorLight: '#ffffff',
+                correctLevel: QRCode.CorrectLevel.M
+            });
+
+            // Start polling
+            updateDashboard();
+            setInterval(updateDashboard, 3000);
+        }
+
+        async function updateDashboard() {
+            try {
+                const resp = await fetch('/api/v1/sessions');
+                const data = await resp.json();
+                const sessions = data.sessions || [];
+
+                // Update stats
+                const activeSessions = sessions.filter(s => s.status === 'active');
+                const totalEarned = sessions.reduce((sum, s) => sum + (s.spent_ckb || 0), 0);
+
+                document.getElementById('stat-active').textContent = activeSessions.length;
+                document.getElementById('stat-total').textContent = sessions.length;
+                document.getElementById('stat-earned').textContent = totalEarned + ' CKB';
+
+                // Check for new sessions
+                if (sessions.length > lastSessionCount) {
+                    const newSessions = sessions.slice(lastSessionCount);
+                    newSessions.forEach(s => {
+                        addEvent('payment', `New session: ${s.funding_ckb} CKB from ${truncateAddress(s.guest_address, 15)}`);
+                    });
+                    lastSessionCount = sessions.length;
+                }
+
+                // Update sessions table
+                const tbody = document.getElementById('sessions-body');
+                if (sessions.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No sessions yet</td></tr>';
+                } else {
+                    tbody.innerHTML = sessions.map(s => `
+                        <tr>
+                            <td class="mono">${s.session_id.substring(0, 8)}</td>
+                            <td class="mono">${truncateAddress(s.guest_address, 15)}</td>
+                            <td>${s.balance_ckb || 0} CKB</td>
+                            <td>${s.spent_ckb || 0} CKB</td>
+                            <td>${s.balance_ckb || 0} min</td>
+                            <td class="${s.status === 'active' ? 'status-active' : 'status-ended'}">${s.status}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error('Failed to update dashboard:', e);
+            }
+        }
+
+        function addEvent(type, message) {
+            const now = new Date();
+            const time = now.toLocaleTimeString('en-US', { hour12: false });
+            events.unshift({ type, message, time });
+
+            // Keep only last 20 events
+            if (events.length > 20) events.pop();
+
+            renderEvents();
+        }
+
+        function renderEvents() {
+            const list = document.getElementById('events-list');
+            if (events.length === 0) {
+                list.innerHTML = '<div class="empty-state">No events yet</div>';
+            } else {
+                list.innerHTML = events.map(e => `
+                    <div class="event-item">
+                        <div>
+                            <span class="event-type ${e.type}">${e.type === 'payment' ? 'PAYMENT' : 'EVENT'}</span>
+                            <span>${e.message}</span>
+                        </div>
+                        <span class="event-time">${e.time}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function truncateAddress(addr, len) {
+            if (!addr || addr.length <= len) return addr || '';
+            const half = Math.floor((len - 3) / 2);
+            return addr.slice(0, half) + '...' + addr.slice(-half);
+        }
+
+        init();
+    </script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+# AirFi Configuration
+
+# CKB Network Settings
+ckb:
+  network: testnet
+  rpc_url: https://testnet.ckb.dev/rpc
+  indexer_url: https://testnet.ckb.dev/indexer
+  # Host wallet private key (generate with: go run cmd/genkey/main.go)
+  # IMPORTANT: Never commit your actual private key!
+  private_key: ""
+
+# Perun Channel Settings
+perun:
+  channel_timeout: 1h
+  funding_timeout: 10m
+  settlement_timeout: 30m
+
+# Authentication Settings
+auth:
+  private_key_path: ./keys/private.pem
+  public_key_path: ./keys/public.pem
+  token_duration: 1h
+
+# Server Settings
+server:
+  host: 0.0.0.0
+  port: 8080
+
+# WiFi Pricing
+wifi:
+  rate_per_minute: 1  # CKBytes per minute
+  min_session_time: 5m
+  max_session_time: 24h

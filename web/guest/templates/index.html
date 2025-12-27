@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .title }}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .hero-section {
+            text-align: center;
+            padding: 2rem 0;
+        }
+        .wifi-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1.5rem;
+            padding: 1rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .wifi-icon svg {
+            width: 48px;
+            height: 48px;
+            color: white;
+        }
+        .features {
+            display: grid;
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+        .feature-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .feature-icon {
+            width: 24px;
+            height: 24px;
+            flex-shrink: 0;
+            color: #10b981;
+        }
+        .feature-text {
+            font-size: 0.875rem;
+            color: #525252;
+        }
+        .feature-text strong {
+            color: #0a0a0a;
+        }
+        .cta-section {
+            margin-top: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        {{ if .error }}
+        <div class="notice" style="background: var(--danger-muted); border: 1px solid var(--danger); margin-top: 24px;">
+            <span>{{ .error }}</span>
+        </div>
+        {{ else }}
+
+        <header class="header hero-section">
+            <div class="wifi-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+                    <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+                    <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+                    <line x1="12" y1="20" x2="12.01" y2="20"/>
+                </svg>
+            </div>
+            <div class="logo">AirFi</div>
+            <p class="tagline">Pay-per-use WiFi with CKB</p>
+        </header>
+
+        <main class="main">
+            <!-- How it works -->
+            <section class="card">
+                <p class="section-label">How It Works</p>
+                <div class="features">
+                    <div class="feature-item">
+                        <svg class="feature-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="4" width="20" height="16" rx="2"/>
+                            <path d="M6 8h.001M10 8h.001"/>
+                            <path d="M2 12h20"/>
+                        </svg>
+                        <div class="feature-text">
+                            <strong>1. Generate Wallet</strong><br>
+                            We create a temporary wallet for your session
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <svg class="feature-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12 6 12 12 16 14"/>
+                        </svg>
+                        <div class="feature-text">
+                            <strong>2. Fund with CKB</strong><br>
+                            Send CKB from any wallet (1 CKB = 1 minute)
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <svg class="feature-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+                            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+                            <line x1="12" y1="20" x2="12.01" y2="20"/>
+                        </svg>
+                        <div class="feature-text">
+                            <strong>3. WiFi Activates</strong><br>
+                            Access starts instantly when funded
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pricing Info -->
+            <section class="card">
+                <p class="section-label">Pricing</p>
+                <ul class="pricing-list">
+                    <li class="pricing-item">
+                        <span class="pricing-duration">1 hour</span>
+                        <span class="pricing-amount">~65 CKB</span>
+                    </li>
+                    <li class="pricing-item">
+                        <span class="pricing-duration">2 hours</span>
+                        <span class="pricing-amount">~120 CKB</span>
+                    </li>
+                    <li class="pricing-item">
+                        <span class="pricing-duration">3 hours</span>
+                        <span class="pricing-amount">~180 CKB</span>
+                    </li>
+                </ul>
+                <p style="font-size: 0.75rem; color: var(--text-muted); text-align: center; margin-top: 0.5rem;">
+                    Minimum: 150 CKB (includes tx fees)
+                </p>
+            </section>
+
+            <!-- CTA -->
+            <section class="cta-section">
+                <a href="/connect" class="btn btn-primary btn-block">
+                    Buy WiFi Access
+                </a>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <p class="footer-text">
+                Powered by <a href="https://catalystlabs.id" target="_blank" class="footer-link">Catalyst Labs</a>
+            </p>
+        </footer>
+        {{ end }}
+    </div>
+</body>
+</html>

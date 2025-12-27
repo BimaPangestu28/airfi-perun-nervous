@@ -1,0 +1,67 @@
+# Binaries
+bin/
+backend
+hostcli
+test_2party
+test_2wallet
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build artifacts
+*.o
+*.a
+
+# Test binary
+*.test
+
+# Coverage
+*.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+vendor/
+
+# Keys and secrets - NEVER COMMIT THESE
+keys/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Config with secrets
+config.yaml
+!config/config.yaml.example
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Claude Code
+.claude/

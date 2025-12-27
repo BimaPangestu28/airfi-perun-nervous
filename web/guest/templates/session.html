@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .title }}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .balance-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+        .balance-item {
+            text-align: center;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .balance-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #0a0a0a;
+        }
+        .balance-label {
+            font-size: 0.75rem;
+            color: #737373;
+            margin-top: 0.25rem;
+        }
+        .progress-bar {
+            height: 8px;
+            background: #e5e5e5;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 1rem 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+            transition: width 0.5s ease;
+        }
+        .rate-info {
+            text-align: center;
+            font-size: 0.875rem;
+            color: #737373;
+            margin-top: 0.5rem;
+        }
+        .channel-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+        .channel-pending {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .channel-open {
+            background: #d1fae5;
+            color: #065f46;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header compact" style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="logo">Your Session</div>
+            <span class="status-badge active" id="status-badge">
+                <span class="status-dot"></span>
+                <span id="status-text">{{ .session.Status }}</span>
+            </span>
+        </header>
+
+        <main class="main">
+            <!-- Timer Section -->
+            <section class="timer-section">
+                <div class="timer-value" id="time-remaining">{{ .remainingTime }}</div>
+                <div class="timer-label">remaining</div>
+            </section>
+
+            <!-- Balance Overview -->
+            <section class="card">
+                <div class="balance-grid">
+                    <div class="balance-item">
+                        <div class="balance-value" id="balance-ckb">{{ .session.BalanceCKB }}</div>
+                        <div class="balance-label">Balance (CKB)</div>
+                    </div>
+                    <div class="balance-item">
+                        <div class="balance-value" id="spent-ckb">{{ .session.SpentCKB }}</div>
+                        <div class="balance-label">Spent (CKB)</div>
+                    </div>
+                    <div class="balance-item">
+                        <div class="balance-value" id="funding-ckb">{{ .session.FundingCKB }}</div>
+                        <div class="balance-label">Funded (CKB)</div>
+                    </div>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill" style="width: 100%;"></div>
+                </div>
+                <div class="rate-info">1 CKB = 1 minute of WiFi access</div>
+            </section>
+
+            <!-- Channel Info -->
+            <section class="card">
+                <div id="channel-status" class="channel-status channel-pending">
+                    <div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                    <span>Opening payment channel...</span>
+                </div>
+
+                <div class="info-list">
+                    <div class="info-row">
+                        <span class="info-label">Session</span>
+                        <span class="info-value mono" id="session-id">{{ .session.ID }}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Channel</span>
+                        <span class="info-value mono" id="channel-id">{{ .session.ChannelID }}</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- End Session -->
+            <section class="danger-card">
+                <h3 class="title">End Session</h3>
+                <p class="subtitle">Settle your channel and disconnect. Unused CKB will be returned to your wallet.</p>
+                <button class="btn btn-danger btn-block" onclick="endSession()">
+                    Disconnect & Settle
+                </button>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <p class="footer-text">Powered by <a href="https://catalystlabs.id" target="_blank" class="footer-link">Catalyst Labs</a></p>
+        </footer>
+    </div>
+
+    <script>
+        const sessionId = '{{ .session.ID }}';
+        let pollInterval;
+        let isActive = true;
+
+        function startPolling() {
+            updateSession();
+            pollInterval = setInterval(updateSession, 3000);
+        }
+
+        async function updateSession() {
+            try {
+                const response = await fetch('/api/v1/sessions/' + sessionId);
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Update timer
+                    document.getElementById('time-remaining').textContent = data.remaining_time;
+
+                    // Update balances
+                    document.getElementById('balance-ckb').textContent = data.balance_ckb;
+                    document.getElementById('spent-ckb').textContent = data.spent_ckb;
+                    document.getElementById('funding-ckb').textContent = data.funding_ckb;
+
+                    // Update progress bar
+                    const progress = (data.balance_ckb / data.funding_ckb) * 100;
+                    document.getElementById('progress-fill').style.width = progress + '%';
+
+                    // Update channel status
+                    const channelStatus = document.getElementById('channel-status');
+                    const channelId = data.channel_id || '';
+
+                    if (channelId && channelId !== '' && channelId !== 'Pending') {
+                        channelStatus.className = 'channel-status channel-open';
+                        channelStatus.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><span>Payment channel active</span>';
+                        document.getElementById('channel-id').textContent = channelId;
+                    }
+
+                    // Update status badge
+                    const badge = document.getElementById('status-badge');
+                    document.getElementById('status-text').textContent = data.status;
+
+                    if (data.status !== 'active') {
+                        isActive = false;
+                        clearInterval(pollInterval);
+                        badge.className = 'status-badge inactive';
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to update session:', error);
+            }
+        }
+
+        window.endSession = async function() {
+            if (!confirm('End your session? The channel will be settled and remaining CKB will be returned.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/v1/sessions/' + sessionId + '/end', {
+                    method: 'POST',
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    clearInterval(pollInterval);
+                    isActive = false;
+                    alert('Session ended. Your channel has been settled.');
+                    window.location.href = '/';
+                } else {
+                    throw new Error(data.error || 'Failed to end session');
+                }
+            } catch (error) {
+                console.error('End session error:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', startPolling);
+    </script>
+</body>
+</html>
