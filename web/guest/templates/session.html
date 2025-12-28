@@ -166,12 +166,46 @@
     <script>
         const sessionId = '{{ .session.ID }}';
         let pollInterval;
+        let countdownInterval;
         let isActive = true;
         let lastStatus = '';
+        let remainingSeconds = 0;
+
+        function parseTimeToSeconds(timeStr) {
+            if (!timeStr || timeStr === '-') return 0;
+            const parts = timeStr.split(':').map(Number);
+            if (parts.length === 3) {
+                return parts[0] * 3600 + parts[1] * 60 + parts[2];
+            } else if (parts.length === 2) {
+                return parts[0] * 60 + parts[1];
+            }
+            return 0;
+        }
+
+        function formatSeconds(seconds) {
+            if (seconds <= 0) return '0:00';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            if (h > 0) {
+                return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+            }
+            return `${m}:${s.toString().padStart(2, '0')}`;
+        }
+
+        function startCountdown() {
+            countdownInterval = setInterval(() => {
+                if (remainingSeconds > 0 && isActive) {
+                    remainingSeconds--;
+                    document.getElementById('time-remaining').textContent = formatSeconds(remainingSeconds);
+                }
+            }, 1000);
+        }
 
         function startPolling() {
             updateSession();
-            pollInterval = setInterval(updateSession, 2000); // Poll every 2 seconds
+            startCountdown();
+            pollInterval = setInterval(updateSession, 3000); // Sync with server every 3 seconds
         }
 
         async function updateSession() {
@@ -182,8 +216,12 @@
                 console.log('Session update:', data); // Debug log
 
                 if (response.ok) {
-                    // Update timer
-                    document.getElementById('time-remaining').textContent = data.remaining_time;
+                    // Sync timer with server (only update if difference is significant)
+                    const serverSeconds = parseTimeToSeconds(data.remaining_time);
+                    if (Math.abs(serverSeconds - remainingSeconds) > 2) {
+                        remainingSeconds = serverSeconds;
+                        document.getElementById('time-remaining').textContent = formatSeconds(remainingSeconds);
+                    }
 
                     // Update balances
                     document.getElementById('balance-ckb').textContent = data.balance_ckb;
@@ -238,6 +276,10 @@
                         badge.className = 'status-badge inactive';
                         isActive = false;
                         clearInterval(pollInterval);
+                        clearInterval(countdownInterval);
+                        // Show ended status instead of timer
+                        document.getElementById('time-remaining').textContent = status === 'settled' ? 'Ended' : 'Expired';
+                        remainingSeconds = 0;
                     }
                 }
             } catch (error) {

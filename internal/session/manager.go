@@ -111,8 +111,8 @@ func (m *Manager) ActivateSession(sessionID string, payment *big.Int) (*Session,
 		duration = m.rateConfig.MaxSessionTime
 	}
 
-	// Generate access token
-	token, err := m.jwtService.GenerateToken(sessionID, session.ChannelID, duration)
+	// Generate access token (MAC/IP not available in this flow)
+	token, err := m.jwtService.GenerateToken(sessionID, session.ChannelID, "", "", duration)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to generate token: %w", err)
 	}
@@ -162,9 +162,9 @@ func (m *Manager) ExtendSession(sessionID string, payment *big.Int) (*Session, s
 		return nil, "", fmt.Errorf("failed to extend session: %w", err)
 	}
 
-	// Generate new token with extended duration
+	// Generate new token with extended duration (MAC/IP not available in this flow)
 	session, _ = m.store.Get(sessionID)
-	newToken, err := m.jwtService.GenerateToken(sessionID, session.ChannelID, session.RemainingTime())
+	newToken, err := m.jwtService.GenerateToken(sessionID, session.ChannelID, "", "", session.RemainingTime())
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to generate new token: %w", err)
 	}

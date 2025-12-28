@@ -126,6 +126,9 @@
         .status-active {
             color: var(--success);
         }
+        .status-opening {
+            color: var(--accent);
+        }
         .status-ended {
             color: var(--text-muted);
         }
@@ -407,7 +410,7 @@
                             <td>${s.balance_ckb || 0} CKB</td>
                             <td>${s.spent_ckb || 0} CKB</td>
                             <td>${s.remaining_time || '-'}</td>
-                            <td class="${s.status === 'active' ? 'status-active' : 'status-ended'}">${s.status}</td>
+                            <td class="${getStatusClass(s.status)}">${formatStatus(s.status)}</td>
                             <td>
                                 ${s.status === 'active' ?
                                     `<button class="token-btn" onclick="showToken('${s.session_id}')">Get Token</button>` :
@@ -455,6 +458,27 @@
             return addr.slice(0, half) + '...' + addr.slice(-half);
         }
 
+        function formatStatus(status) {
+            const statusMap = {
+                'active': 'Active',
+                'channel_opening': 'Opening...',
+                'channel_open': 'Active',
+                'channel_failed': 'Failed',
+                'expired': 'Expired',
+                'ended': 'Ended',
+                'settled': 'Settled',
+                'insufficient_funds': 'Low Funds',
+                'cell_preparation_failed': 'Setup Failed'
+            };
+            return statusMap[status] || status;
+        }
+
+        function getStatusClass(status) {
+            if (status === 'active' || status === 'channel_open') return 'status-active';
+            if (status === 'channel_opening') return 'status-opening';
+            return 'status-ended';
+        }
+
         let currentToken = '';
 
         async function showToken(sessionId) {
@@ -476,6 +500,8 @@
                     tokenInfo.innerHTML = `
                         <strong>Session:</strong> ${data.session_id}<br>
                         <strong>Channel:</strong> ${data.channel_id || '-'}<br>
+                        <strong>MAC Address:</strong> ${data.mac_address || '-'}<br>
+                        <strong>IP Address:</strong> ${data.ip_address || '-'}<br>
                         <strong>Expires:</strong> ${new Date(data.expires_at).toLocaleString()}
                     `;
                 } else {

@@ -276,6 +276,7 @@ func main() {
 		api.GET("/sessions/:sessionId/token", server.handleGetSessionToken)
 		api.POST("/sessions/:sessionId/end", server.handleEndSession)
 		api.POST("/sessions/:sessionId/extend", server.handleExtendSession)
+		api.POST("/sessions/:sessionId/refund", server.handleManualRefund) // Manual refund to specified address
 		api.POST("/auth/validate", server.handleValidateToken)
 	}
 
@@ -505,13 +506,21 @@ func (s *Server) handleListSessions(c *gin.Context) {
 	dbSessions, err := s.db.ListSessions("")
 	if err == nil {
 		for _, session := range dbSessions {
-			remaining := time.Until(session.ExpiresAt)
-			if remaining < 0 {
-				remaining = 0
-			}
 			status := session.Status
-			if remaining <= 0 && status == "active" {
-				status = "expired"
+			var remainingTimeStr string
+
+			// For channel_opening status, timer hasn't started yet
+			if status == "channel_opening" {
+				remainingTimeStr = "-"
+			} else {
+				remaining := time.Until(session.ExpiresAt)
+				if remaining < 0 {
+					remaining = 0
+				}
+				if remaining <= 0 && status == "active" {
+					status = "expired"
+				}
+				remainingTimeStr = formatDuration(remaining)
 			}
 
 			sessions = append(sessions, sessionInfo{
@@ -520,7 +529,7 @@ func (s *Server) handleListSessions(c *gin.Context) {
 				BalanceCKB:    session.BalanceCKB,
 				FundingCKB:    session.FundingCKB,
 				SpentCKB:      session.SpentCKB,
-				RemainingTime: formatDuration(remaining),
+				RemainingTime: remainingTimeStr,
 				Status:        status,
 				ChannelID:     session.ChannelID,
 				CreatedAt:     session.CreatedAt.Format(time.RFC3339),
@@ -528,9 +537,20 @@ func (s *Server) handleListSessions(c *gin.Context) {
 		}
 	}
 
-	// Add Perun channel sessions (in-memory)
+	// Build a set of session IDs already in the list (from database)
+	sessionIDSet := make(map[string]bool)
+	for _, s := range sessions {
+		sessionIDSet[s.SessionID] = true
+	}
+
+	// Add Perun channel sessions (in-memory) only if not already in database list
 	s.sessionsMu.RLock()
 	for _, session := range s.sessions {
+		// Skip if already added from database
+		if sessionIDSet[session.ID] {
+			continue
+		}
+
 		remaining := time.Until(session.ExpiresAt)
 		if remaining < 0 {
 			remaining = 0
@@ -668,13 +688,21 @@ func (s *Server) handleGetSession(c *gin.Context) {
 	// Check database for session
 	dbSession, err := s.db.GetSession(sessionID)
 	if err == nil {
-		remaining := time.Until(dbSession.ExpiresAt)
-		if remaining < 0 {
-			remaining = 0
-		}
 		status := dbSession.Status
-		if remaining <= 0 && status == "active" {
-			status = "expired"
+		var remainingTimeStr string
+
+		// For channel_opening status, timer hasn't started yet
+		if status == "channel_opening" {
+			remainingTimeStr = "-"
+		} else {
+			remaining := time.Until(dbSession.ExpiresAt)
+			if remaining < 0 {
+				remaining = 0
+			}
+			if remaining <= 0 && status == "active" {
+				status = "expired"
+			}
+			remainingTimeStr = formatDuration(remaining)
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -686,7 +714,7 @@ func (s *Server) handleGetSession(c *gin.Context) {
 			"funding_ckb":    dbSession.FundingCKB,
 			"balance_ckb":    dbSession.BalanceCKB,
 			"spent_ckb":      dbSession.SpentCKB,
-			"remaining_time": formatDuration(remaining),
+			"remaining_time": remainingTimeStr,
 			"expires_at":     dbSession.ExpiresAt.Format(time.RFC3339),
 			"status":         status,
 		})
@@ -796,6 +824,85 @@ func (s *Server) handleExtendSession(c *gin.Context) {
 	})
 }
 
+// handleManualRefund refunds remaining CKB to a specified address.
+// Use this when automatic sender detection failed.
+func (s *Server) handleManualRefund(c *gin.Context) {
+	sessionID := c.Param("sessionId")
+
+	var req struct {
+		ToAddress string `json:"to_address" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get wallet by session ID
+	wallet, err := s.db.GetWalletBySessionID(sessionID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "wallet not found for session"})
+		return
+	}
+
+	// Check if already withdrawn
+	if wallet.Status == "withdrawn" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "funds already withdrawn"})
+		return
+	}
+
+	s.logger.Info("manual refund requested",
+		zap.String("session_id", sessionID),
+		zap.String("wallet_id", wallet.ID),
+		zap.String("to_address", req.ToAddress),
+	)
+
+	// Load private key
+	guestKeyBytes, err := hex.DecodeString(wallet.PrivateKeyHex)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load wallet key"})
+		return
+	}
+	guestPrivKey := secp256k1.PrivKeyFromBytes(guestKeyBytes)
+
+	// Get lock script for wallet
+	guestLockScript, err := guest.DecodeAddress(wallet.Address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decode wallet address"})
+		return
+	}
+
+	// Withdraw to specified address
+	withdrawer := perun.NewWithdrawer(s.ckbClient, s.logger.Named("withdrawer"))
+	txHash, err := withdrawer.WithdrawAll(c.Request.Context(), guestPrivKey, guestLockScript, req.ToAddress)
+	if err != nil {
+		s.logger.Error("manual refund failed",
+			zap.Error(err),
+			zap.String("session_id", sessionID),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "refund failed",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Update wallet status
+	s.db.UpdateWalletStatus(wallet.ID, "withdrawn")
+
+	s.logger.Info("manual refund successful",
+		zap.String("session_id", sessionID),
+		zap.String("tx_hash", txHash.Hex()),
+		zap.String("to_address", req.ToAddress),
+	)
+
+	c.JSON(http.StatusOK, gin.H{
+		"session_id": sessionID,
+		"tx_hash":    txHash.Hex(),
+		"to_address": req.ToAddress,
+		"status":     "refunded",
+	})
+}
+
 // handleGetSessionToken returns the JWT token for a session.
 // JWT is only generated after channel is successfully opened (status = "active").
 func (s *Server) handleGetSessionToken(c *gin.Context) {
@@ -824,9 +931,9 @@ func (s *Server) handleGetSessionToken(c *gin.Context) {
 		return
 	}
 
-	// Generate fresh JWT token
+	// Generate fresh JWT token with MAC and IP for device binding
 	remaining := time.Until(dbSession.ExpiresAt)
-	token, err := s.jwtService.GenerateToken(dbSession.ID, "perun", remaining)
+	token, err := s.jwtService.GenerateToken(dbSession.ID, dbSession.ChannelID, dbSession.MACAddress, dbSession.IPAddress, remaining)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
 		return
@@ -837,6 +944,8 @@ func (s *Server) handleGetSessionToken(c *gin.Context) {
 		"access_token": token,
 		"expires_at":   dbSession.ExpiresAt.Format(time.RFC3339),
 		"channel_id":   dbSession.ChannelID,
+		"mac_address":  dbSession.MACAddress,
+		"ip_address":   dbSession.IPAddress,
 	})
 }
 
@@ -873,6 +982,8 @@ func (s *Server) handleValidateToken(c *gin.Context) {
 		"valid":          true,
 		"session_id":     claims.SessionID,
 		"channel_id":     claims.ChannelID,
+		"mac_address":    claims.MACAddress,
+		"ip_address":     claims.IPAddress,
 		"expires_at":     claims.ExpiresAt.Time.Format(time.RFC3339),
 		"remaining_secs": int(time.Until(claims.ExpiresAt.Time).Seconds()),
 	})
@@ -1166,19 +1277,30 @@ func (s *Server) createSessionFromWallet(wallet *db.GuestWallet, balanceCKB int6
 	rand.Read(idBytes)
 	sessionID := hex.EncodeToString(idBytes)
 
+	// Calculate usable funding (total - reserved for channel operations)
+	// ~1500 CKB is reserved for Perun channel setup (channel cell + token cell + fees)
+	const reservedCKB int64 = 1500
+	usableCKB := balanceCKB - reservedCKB
+	if usableCKB < 0 {
+		usableCKB = 0
+	}
+
 	// Create session in database
+	// OPTIMISTIC OPENING: Timer starts NOW, WiFi access granted immediately
+	// Duration based on usable CKB at rate of ~8.33 CKB per minute (500 CKB = 1 hour)
 	now := time.Now()
+	sessionDuration := time.Duration(usableCKB*100000000/833333333) * time.Minute
 	session := &db.Session{
 		ID:           sessionID,
 		WalletID:     wallet.ID,
 		GuestAddress: wallet.Address,
 		HostAddress:  s.hostClient.GetAddress(),
 		FundingCKB:   balanceCKB,
-		BalanceCKB:   balanceCKB,
+		BalanceCKB:   usableCKB,
 		SpentCKB:     0,
 		CreatedAt:    now,
-		ExpiresAt:    now.Add(time.Duration(balanceCKB*100000000/833333333) * time.Minute), // ~8.33 CKB per minute
-		Status:       "channel_opening",
+		ExpiresAt:    now.Add(sessionDuration), // Timer starts NOW (optimistic)
+		Status:       "active",                  // Active immediately (optimistic)
 		MACAddress:   wallet.MACAddress,
 		IPAddress:    wallet.IPAddress,
 	}
@@ -1191,7 +1313,9 @@ func (s *Server) createSessionFromWallet(wallet *db.GuestWallet, balanceCKB int6
 	s.logger.Info("session created from wallet",
 		zap.String("session_id", sessionID),
 		zap.String("wallet_id", wallet.ID),
-		zap.Int64("balance_ckb", balanceCKB),
+		zap.Int64("funded_ckb", balanceCKB),
+		zap.Int64("usable_ckb", usableCKB),
+		zap.Int64("reserved_ckb", reservedCKB),
 		zap.String("mac_address", wallet.MACAddress),
 	)
 
@@ -1230,18 +1354,8 @@ func (s *Server) checkPendingWallets(ctx context.Context) {
 		if balance >= 150*100000000 { // 150 CKB minimum for Perun channel
 			balanceCKB := balance / 100000000
 
-			// Detect sender address for later refund
-			withdrawer := perun.NewWithdrawer(s.ckbClient, s.logger.Named("withdrawer"))
-			senderAddr, err := withdrawer.GetSenderAddress(ctx, wallet.Address, types.NetworkTest)
-			if err != nil {
-				s.logger.Warn("failed to detect sender address", zap.Error(err))
-			} else {
-				s.logger.Info("detected sender address",
-					zap.String("wallet_id", wallet.ID),
-					zap.String("sender_address", senderAddr),
-				)
-				s.db.UpdateWalletSenderAddress(wallet.ID, senderAddr)
-			}
+			// Detect sender address for later refund (with retry)
+			go s.detectAndSaveSenderAddress(wallet.ID, wallet.Address)
 
 			sessionID := s.createSessionFromWallet(wallet, balanceCKB)
 			if sessionID != "" {
@@ -1252,7 +1366,26 @@ func (s *Server) checkPendingWallets(ctx context.Context) {
 					zap.String("session_id", sessionID),
 				)
 
-				// Open Perun channel automatically
+				// OPTIMISTIC OPENING: Authorize MAC immediately for instant WiFi access
+				// Channel will open in background - if it fails, we'll deauthorize
+				if wallet.MACAddress != "" {
+					comment := fmt.Sprintf("AirFi session (optimistic): %s", sessionID)
+					if err := s.router.AuthorizeMAC(ctx, wallet.MACAddress, wallet.IPAddress, comment); err != nil {
+						s.logger.Error("failed to authorize MAC (optimistic)",
+							zap.Error(err),
+							zap.String("mac", wallet.MACAddress),
+							zap.String("session_id", sessionID),
+						)
+					} else {
+						s.logger.Info("MAC authorized (optimistic) - WiFi access granted immediately",
+							zap.String("mac", wallet.MACAddress),
+							zap.String("ip", wallet.IPAddress),
+							zap.String("session_id", sessionID),
+						)
+					}
+				}
+
+				// Open Perun channel in background
 				go s.openChannelForSession(ctx, wallet, sessionID, balanceCKB)
 			}
 		}
@@ -1406,41 +1539,45 @@ func (s *Server) openChannelForSession(ctx context.Context, wallet *db.GuestWall
 		guestClient.Close()
 		s.logger.Error("failed to open channel", zap.Error(err))
 		s.db.UpdateSessionStatus(sessionID, "channel_failed")
+
+		// OPTIMISTIC OPENING: Deauthorize MAC since channel failed
+		// User was given WiFi access optimistically, now revoke it
+		if wallet.MACAddress != "" {
+			s.logger.Warn("revoking optimistic WiFi access due to channel failure",
+				zap.String("session_id", sessionID),
+				zap.String("mac", wallet.MACAddress),
+			)
+			if err := s.router.DeauthorizeMAC(ctx, wallet.MACAddress); err != nil {
+				s.logger.Error("failed to deauthorize MAC after channel failure",
+					zap.Error(err),
+					zap.String("mac", wallet.MACAddress),
+				)
+			}
+		}
 		return
 	}
 
 	// Get channel ID
 	channelID := fmt.Sprintf("%x", channel.ID())
 
-	// Update session with channel info
+	// Update session with channel ID (timer already started with optimistic opening)
 	if err := s.db.UpdateSessionChannel(sessionID, channelID, "active"); err != nil {
 		s.logger.Error("failed to update session channel", zap.Error(err), zap.String("session_id", sessionID))
 	} else {
-		s.logger.Info("session status updated to active", zap.String("session_id", sessionID), zap.String("channel_id", channelID))
+		s.logger.Info("channel opened successfully",
+			zap.String("session_id", sessionID),
+			zap.String("channel_id", channelID),
+		)
 	}
 	if err := s.db.UpdateWalletStatus(wallet.ID, "channel_open"); err != nil {
 		s.logger.Error("failed to update wallet status", zap.Error(err), zap.String("wallet_id", wallet.ID))
 	}
 
-	// Authorize MAC address on router for WiFi access
-	if wallet.MACAddress != "" {
-		comment := fmt.Sprintf("AirFi session: %s", sessionID)
-		if err := s.router.AuthorizeMAC(ctx, wallet.MACAddress, wallet.IPAddress, comment); err != nil {
-			s.logger.Error("failed to authorize MAC on router",
-				zap.Error(err),
-				zap.String("mac", wallet.MACAddress),
-				zap.String("session_id", sessionID),
-			)
-		} else {
-			s.logger.Info("MAC authorized on router",
-				zap.String("mac", wallet.MACAddress),
-				zap.String("ip", wallet.IPAddress),
-				zap.String("session_id", sessionID),
-			)
-		}
-	}
+	// MAC already authorized earlier (optimistic opening)
+	// No need to authorize again
 
 	// Store in-memory for micropayment processing
+	sessionDuration := time.Duration(fundingCKB*100000000/833333333) * time.Minute
 	guestSession := &GuestSession{
 		ID:            sessionID,
 		Client:        guestClient,
@@ -1449,7 +1586,7 @@ func (s *Server) openChannelForSession(ctx context.Context, wallet *db.GuestWall
 		FundingAmount: guestFunding,
 		TotalPaid:     big.NewInt(0),
 		CreatedAt:     time.Now(),
-		ExpiresAt:     time.Now().Add(time.Duration(balanceCKB) * time.Minute),
+		ExpiresAt:     time.Now().Add(sessionDuration), // Use the same calculated duration
 	}
 
 	s.sessionsMu.Lock()
@@ -1587,6 +1724,42 @@ func (s *Server) settleExpiredSession(ctx context.Context, session *GuestSession
 	}()
 }
 
+// detectAndSaveSenderAddress detects the sender address with retries.
+// CKB indexer might not have indexed the transaction immediately.
+func (s *Server) detectAndSaveSenderAddress(walletID, walletAddress string) {
+	withdrawer := perun.NewWithdrawer(s.ckbClient, s.logger.Named("withdrawer"))
+
+	// Retry with increasing delays
+	delays := []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
+
+	for i, delay := range delays {
+		time.Sleep(delay)
+
+		senderAddr, err := withdrawer.GetSenderAddress(context.Background(), walletAddress, types.NetworkTest)
+		if err != nil {
+			s.logger.Warn("sender detection attempt failed",
+				zap.String("wallet_id", walletID),
+				zap.Int("attempt", i+1),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// Success - save the sender address
+		s.db.UpdateWalletSenderAddress(walletID, senderAddr)
+		s.logger.Info("sender address detected and saved",
+			zap.String("wallet_id", walletID),
+			zap.String("sender_address", senderAddr),
+			zap.Int("attempt", i+1),
+		)
+		return
+	}
+
+	s.logger.Error("failed to detect sender address after all retries",
+		zap.String("wallet_id", walletID),
+	)
+}
+
 // withdrawToSender withdraws remaining CKB from guest wallet to the original sender.
 func (s *Server) withdrawToSender(ctx context.Context, sessionID string) (string, error) {
 	// Get wallet by session ID
@@ -1595,8 +1768,33 @@ func (s *Server) withdrawToSender(ctx context.Context, sessionID string) (string
 		return "", fmt.Errorf("failed to get wallet: %w", err)
 	}
 
+	s.logger.Info("starting refund process",
+		zap.String("session_id", sessionID),
+		zap.String("wallet_id", wallet.ID),
+		zap.String("wallet_address", wallet.Address),
+		zap.String("sender_address", wallet.SenderAddress),
+	)
+
+	// If sender address not found, try to detect it now
 	if wallet.SenderAddress == "" {
-		return "", fmt.Errorf("no sender address found for wallet %s", wallet.ID)
+		s.logger.Info("sender address not found, attempting detection...",
+			zap.String("wallet_id", wallet.ID),
+		)
+
+		withdrawer := perun.NewWithdrawer(s.ckbClient, s.logger.Named("withdrawer"))
+		senderAddr, err := withdrawer.GetSenderAddress(ctx, wallet.Address, types.NetworkTest)
+		if err != nil {
+			return "", fmt.Errorf("no sender address found and detection failed: %w", err)
+		}
+
+		// Save for future use
+		s.db.UpdateWalletSenderAddress(wallet.ID, senderAddr)
+		wallet.SenderAddress = senderAddr
+
+		s.logger.Info("sender address detected during refund",
+			zap.String("wallet_id", wallet.ID),
+			zap.String("sender_address", senderAddr),
+		)
 	}
 
 	// Load private key
@@ -1612,22 +1810,43 @@ func (s *Server) withdrawToSender(ctx context.Context, sessionID string) (string
 		return "", fmt.Errorf("failed to decode wallet address: %w", err)
 	}
 
-	// Wait a bit for settlement transaction to confirm
-	s.logger.Info("waiting for settlement to confirm before withdrawal...",
-		zap.String("session_id", sessionID),
-	)
-	time.Sleep(30 * time.Second)
-
-	// Withdraw all remaining CKB
 	withdrawer := perun.NewWithdrawer(s.ckbClient, s.logger.Named("withdrawer"))
-	txHash, err := withdrawer.WithdrawAll(ctx, guestPrivKey, guestLockScript, wallet.SenderAddress)
-	if err != nil {
-		return "", fmt.Errorf("failed to withdraw: %w", err)
+
+	// Retry withdrawal with increasing wait times
+	// Settlement might take a while to confirm on CKB testnet
+	waitTimes := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
+	var lastErr error
+
+	for i, waitTime := range waitTimes {
+		s.logger.Info("waiting for settlement to confirm before withdrawal...",
+			zap.String("session_id", sessionID),
+			zap.Int("attempt", i+1),
+			zap.Duration("wait_time", waitTime),
+		)
+		time.Sleep(waitTime)
+
+		// Try withdrawal
+		txHash, err := withdrawer.WithdrawAll(ctx, guestPrivKey, guestLockScript, wallet.SenderAddress)
+		if err != nil {
+			lastErr = err
+			s.logger.Warn("withdrawal attempt failed, will retry",
+				zap.String("session_id", sessionID),
+				zap.Int("attempt", i+1),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// Success!
+		s.db.UpdateWalletStatus(wallet.ID, "withdrawn")
+		s.logger.Info("refund successful",
+			zap.String("session_id", sessionID),
+			zap.String("tx_hash", txHash.Hex()),
+			zap.String("to_address", wallet.SenderAddress),
+		)
+		return txHash.Hex(), nil
 	}
 
-	// Update wallet status
-	s.db.UpdateWalletStatus(wallet.ID, "withdrawn")
-
-	return txHash.Hex(), nil
+	return "", fmt.Errorf("failed to withdraw after %d attempts: %w", len(waitTimes), lastErr)
 }
 

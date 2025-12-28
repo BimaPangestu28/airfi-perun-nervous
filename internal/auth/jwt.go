@@ -10,8 +10,10 @@ import (
 
 // Claims represents the JWT claims for WiFi access.
 type Claims struct {
-	SessionID string `json:"session_id"`
-	ChannelID string `json:"channel_id"`
+	SessionID  string `json:"session_id"`
+	ChannelID  string `json:"channel_id"`
+	MACAddress string `json:"mac_address,omitempty"`
+	IPAddress  string `json:"ip_address,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -41,12 +43,14 @@ func NewJWTServiceFromKeys(privateKey *ecdsa.PrivateKey, publicKey *ecdsa.Public
 }
 
 // GenerateToken creates a signed JWT for a session.
-func (s *JWTService) GenerateToken(sessionID, channelID string, duration time.Duration) (string, error) {
+func (s *JWTService) GenerateToken(sessionID, channelID, macAddress, ipAddress string, duration time.Duration) (string, error) {
 	now := time.Now()
 
 	claims := &Claims{
-		SessionID: sessionID,
-		ChannelID: channelID,
+		SessionID:  sessionID,
+		ChannelID:  channelID,
+		MACAddress: macAddress,
+		IPAddress:  ipAddress,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.issuer,
 			Subject:   sessionID,
@@ -98,7 +102,7 @@ func (s *JWTService) RefreshToken(tokenString string, additionalDuration time.Du
 	currentExpiry := claims.ExpiresAt.Time
 	newExpiry := currentExpiry.Add(additionalDuration)
 
-	return s.GenerateToken(claims.SessionID, claims.ChannelID, time.Until(newExpiry))
+	return s.GenerateToken(claims.SessionID, claims.ChannelID, claims.MACAddress, claims.IPAddress, time.Until(newExpiry))
 }
 
 // IsExpired checks if a token is expired.

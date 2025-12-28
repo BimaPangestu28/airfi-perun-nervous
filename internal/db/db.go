@@ -259,6 +259,14 @@ func (db *DB) UpdateSessionChannel(id, channelID, status string) error {
 	return err
 }
 
+// UpdateSessionChannelAndActivate updates channel ID, status to active, and starts the timer.
+// This should be called when the Perun channel is successfully opened.
+func (db *DB) UpdateSessionChannelAndActivate(id, channelID string, duration time.Duration) error {
+	expiresAt := time.Now().Add(duration)
+	_, err := db.conn.Exec(`UPDATE sessions SET channel_id = ?, status = 'active', expires_at = ? WHERE id = ?`, channelID, expiresAt, id)
+	return err
+}
+
 // UpdateSessionBalance updates the balance and spent amount.
 func (db *DB) UpdateSessionBalance(id string, balanceCKB, spentCKB int64) error {
 	_, err := db.conn.Exec(`UPDATE sessions SET balance_ckb = ?, spent_ckb = ? WHERE id = ?`, balanceCKB, spentCKB, id)
