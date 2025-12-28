@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/airfi/airfi-perun-nervous/internal/auth"
 	"github.com/airfi/airfi-perun-nervous/internal/db"
 	"github.com/airfi/airfi-perun-nervous/internal/guest"
+	"github.com/airfi/airfi-perun-nervous/internal/router"
 	"github.com/airfi/airfi-perun-nervous/internal/perun"
 )
 
@@ -57,6 +59,7 @@ type Server struct {
 	logger            *zap.Logger
 	ratePerMin        *big.Int // CKBytes per minute
 	dashboardPassword string   // Simple dashboard auth
+	router            router.Router
 }
 
 func main() {
@@ -155,6 +158,57 @@ func main() {
 
 	// Initialize SQLite database
 	dbPath := os.Getenv("DB_PATH")
+
+	// Initialize router (OpenWrt/OpenNDS)
+	var wifiRouter router.Router
+	openwrtAddr := os.Getenv("OPENWRT_ADDRESS")
+
+	if openwrtAddr != "" {
+		openwrtPort := 22
+		if portStr := os.Getenv("OPENWRT_PORT"); portStr != "" {
+			if p, err := strconv.Atoi(portStr); err == nil {
+				openwrtPort = p
+			}
+		}
+
+		authTimeout := 0 // Use OpenNDS default
+		if timeoutStr := os.Getenv("OPENWRT_AUTH_TIMEOUT"); timeoutStr != "" {
+			if t, err := strconv.Atoi(timeoutStr); err == nil {
+				authTimeout = t
+			}
+		}
+
+		openwrtConfig := router.OpenWrtConfig{
+			Address:     openwrtAddr,
+			Port:        openwrtPort,
+			Username:    os.Getenv("OPENWRT_USERNAME"),
+			Password:    os.Getenv("OPENWRT_PASSWORD"),
+			PrivateKey:  os.Getenv("OPENWRT_PRIVATE_KEY"),
+			AuthTimeout: authTimeout,
+		}
+
+		if openwrtConfig.Username == "" {
+			openwrtConfig.Username = "root"
+		}
+
+		var err error
+		wifiRouter, err = router.NewOpenWrtClient(openwrtConfig, logger.Named("openwrt"))
+		if err != nil {
+			logger.Fatal("failed to create OpenWrt client", zap.Error(err))
+		}
+		fmt.Printf("  Router: OpenWrt/OpenNDS @ %s:%d\n", openwrtAddr, openwrtPort)
+
+		// Test connection
+		if err := wifiRouter.TestConnection(context.Background()); err != nil {
+			logger.Warn("OpenWrt connection test failed", zap.Error(err))
+			fmt.Printf("  OpenNDS Status: Connection failed - %s\n", err.Error())
+		} else {
+			fmt.Println("  OpenNDS Status: Connected")
+		}
+	} else {
+		wifiRouter = &router.NoopRouter{}
+		fmt.Println("  Router: Not configured (set OPENWRT_ADDRESS to enable)")
+	}
 	if dbPath == "" {
 		dbPath = "./airfi.db"
 	}
@@ -182,6 +236,7 @@ func main() {
 		logger:            logger,
 		ratePerMin:        big.NewInt(833333333), // ~8.33 CKB per minute (500 CKB = 1 hour)
 		dashboardPassword: dashboardPassword,
+		router:            wifiRouter,
 	}
 
 	// Setup proposal handler
@@ -288,8 +343,15 @@ func (s *Server) handleIndex(c *gin.Context) {
 }
 
 func (s *Server) handleConnect(c *gin.Context) {
+	// Capture MAC and IP from OpenNDS captive portal redirect
+	// OpenNDS sends: http://portal/?mac=aa:bb:cc:dd:ee:ff&ip=192.168.1.100
+	mac := c.Query("mac")
+	ip := c.Query("ip")
+
 	c.HTML(http.StatusOK, "connect.html", gin.H{
-		"title": "Connect - AirFi",
+		"title":      "Connect - AirFi",
+		"macAddress": mac,
+		"ipAddress":  ip,
 	})
 }
 
@@ -849,6 +911,23 @@ func (s *Server) handleEndSession(c *gin.Context) {
 	// Update database
 	s.db.SettleSession(sessionID)
 
+	// Deauthorize MAC address from router
+	dbSession, err := s.db.GetSession(sessionID)
+	if err == nil && dbSession.MACAddress != "" {
+		if err := s.router.DeauthorizeMAC(ctx, dbSession.MACAddress); err != nil {
+			s.logger.Error("failed to deauthorize MAC from router",
+				zap.Error(err),
+				zap.String("mac", dbSession.MACAddress),
+				zap.String("session_id", sessionID),
+			)
+		} else {
+			s.logger.Info("MAC deauthorized from router",
+				zap.String("mac", dbSession.MACAddress),
+				zap.String("session_id", sessionID),
+			)
+		}
+	}
+
 	session.Client.Close()
 
 	// Auto-withdraw remaining CKB to sender
@@ -955,6 +1034,13 @@ func formatDuration(d time.Duration) string {
 
 // handleCreateGuestWallet generates a new guest wallet for funding.
 func (s *Server) handleCreateGuestWallet(c *gin.Context) {
+	// Parse optional MAC and IP from request (sent by frontend from captive portal redirect)
+	var req struct {
+		MACAddress string `json:"mac_address"`
+		IPAddress  string `json:"ip_address"`
+	}
+	c.ShouldBindJSON(&req) // Ignore error - fields are optional
+
 	// Generate new wallet
 	wallet, err := s.walletManager.GenerateWallet()
 	if err != nil {
@@ -973,6 +1059,8 @@ func (s *Server) handleCreateGuestWallet(c *gin.Context) {
 		BalanceCKB:    0,
 		CreatedAt:     time.Now(),
 		Status:        "created",
+		MACAddress:    req.MACAddress,
+		IPAddress:     req.IPAddress,
 	}
 
 	if err := s.db.CreateGuestWallet(dbWallet); err != nil {
@@ -984,6 +1072,7 @@ func (s *Server) handleCreateGuestWallet(c *gin.Context) {
 	s.logger.Info("guest wallet created",
 		zap.String("wallet_id", wallet.ID),
 		zap.String("address", wallet.Address),
+		zap.String("mac_address", req.MACAddress),
 	)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1089,7 +1178,9 @@ func (s *Server) createSessionFromWallet(wallet *db.GuestWallet, balanceCKB int6
 		SpentCKB:     0,
 		CreatedAt:    now,
 		ExpiresAt:    now.Add(time.Duration(balanceCKB*100000000/833333333) * time.Minute), // ~8.33 CKB per minute
-		Status:       "active",
+		Status:       "channel_opening",
+		MACAddress:   wallet.MACAddress,
+		IPAddress:    wallet.IPAddress,
 	}
 
 	if err := s.db.CreateSession(session); err != nil {
@@ -1101,6 +1192,7 @@ func (s *Server) createSessionFromWallet(wallet *db.GuestWallet, balanceCKB int6
 		zap.String("session_id", sessionID),
 		zap.String("wallet_id", wallet.ID),
 		zap.Int64("balance_ckb", balanceCKB),
+		zap.String("mac_address", wallet.MACAddress),
 	)
 
 	return sessionID
@@ -1330,6 +1422,24 @@ func (s *Server) openChannelForSession(ctx context.Context, wallet *db.GuestWall
 		s.logger.Error("failed to update wallet status", zap.Error(err), zap.String("wallet_id", wallet.ID))
 	}
 
+	// Authorize MAC address on router for WiFi access
+	if wallet.MACAddress != "" {
+		comment := fmt.Sprintf("AirFi session: %s", sessionID)
+		if err := s.router.AuthorizeMAC(ctx, wallet.MACAddress, wallet.IPAddress, comment); err != nil {
+			s.logger.Error("failed to authorize MAC on router",
+				zap.Error(err),
+				zap.String("mac", wallet.MACAddress),
+				zap.String("session_id", sessionID),
+			)
+		} else {
+			s.logger.Info("MAC authorized on router",
+				zap.String("mac", wallet.MACAddress),
+				zap.String("ip", wallet.IPAddress),
+				zap.String("session_id", sessionID),
+			)
+		}
+	}
+
 	// Store in-memory for micropayment processing
 	guestSession := &GuestSession{
 		ID:            sessionID,
@@ -1443,6 +1553,24 @@ func (s *Server) settleExpiredSession(ctx context.Context, session *GuestSession
 
 	// Update database
 	s.db.SettleSession(session.ID)
+
+	// Deauthorize MAC address from router for expired session
+	dbSession, err := s.db.GetSession(session.ID)
+	if err == nil && dbSession.MACAddress != "" {
+		if err := s.router.DeauthorizeMAC(ctx, dbSession.MACAddress); err != nil {
+			s.logger.Error("failed to deauthorize MAC from router",
+				zap.Error(err),
+				zap.String("mac", dbSession.MACAddress),
+				zap.String("session_id", session.ID),
+			)
+		} else {
+			s.logger.Info("MAC deauthorized from router",
+				zap.String("mac", dbSession.MACAddress),
+				zap.String("session_id", session.ID),
+			)
+		}
+	}
+
 	session.Client.Close()
 
 	// Auto-withdraw for expired session too

@@ -27,6 +27,8 @@ type Session struct {
 	ExpiresAt    time.Time
 	Status       string // pending_funding, funding_detected, channel_open, active, settled, expired
 	SettledAt    *time.Time
+	MACAddress   string // Guest device MAC address
+	IPAddress    string // Guest device IP address
 }
 
 // GuestWallet represents a generated guest wallet.
@@ -41,6 +43,8 @@ type GuestWallet struct {
 	SessionID     string // Associated session after funding
 	Status        string // created, funded, channel_open, settled, withdrawn
 	SenderAddress string // Original sender address for refund
+	MACAddress    string // Guest device MAC address (from captive portal)
+	IPAddress     string // Guest device IP address (from captive portal)
 }
 
 // Open opens the SQLite database and creates tables if needed.
@@ -78,7 +82,9 @@ func createTables(conn *sql.DB) error {
 			created_at DATETIME,
 			expires_at DATETIME,
 			status TEXT DEFAULT 'pending_funding',
-			settled_at DATETIME
+			settled_at DATETIME,
+			mac_address TEXT DEFAULT '',
+			ip_address TEXT DEFAULT ''
 		);
 
 		CREATE TABLE IF NOT EXISTS guest_wallets (
@@ -91,7 +97,9 @@ func createTables(conn *sql.DB) error {
 			funded_at DATETIME,
 			session_id TEXT,
 			status TEXT DEFAULT 'created',
-			sender_address TEXT DEFAULT ''
+			sender_address TEXT DEFAULT '',
+			mac_address TEXT DEFAULT '',
+			ip_address TEXT DEFAULT ''
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
@@ -105,23 +113,23 @@ func createTables(conn *sql.DB) error {
 // CreateSession inserts a new session.
 func (db *DB) CreateSession(s *Session) error {
 	_, err := db.conn.Exec(`
-		INSERT INTO sessions (id, wallet_id, channel_id, guest_address, host_address, funding_ckb, balance_ckb, spent_ckb, created_at, expires_at, status, settled_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, s.ID, s.WalletID, s.ChannelID, s.GuestAddress, s.HostAddress, s.FundingCKB, s.BalanceCKB, s.SpentCKB, s.CreatedAt, s.ExpiresAt, s.Status, s.SettledAt)
+		INSERT INTO sessions (id, wallet_id, channel_id, guest_address, host_address, funding_ckb, balance_ckb, spent_ckb, created_at, expires_at, status, settled_at, mac_address, ip_address)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, s.ID, s.WalletID, s.ChannelID, s.GuestAddress, s.HostAddress, s.FundingCKB, s.BalanceCKB, s.SpentCKB, s.CreatedAt, s.ExpiresAt, s.Status, s.SettledAt, s.MACAddress, s.IPAddress)
 	return err
 }
 
 // GetSession retrieves a session by ID.
 func (db *DB) GetSession(id string) (*Session, error) {
 	row := db.conn.QueryRow(`
-		SELECT id, wallet_id, channel_id, guest_address, host_address, funding_ckb, balance_ckb, spent_ckb, created_at, expires_at, status, settled_at
+		SELECT id, wallet_id, channel_id, guest_address, host_address, funding_ckb, balance_ckb, spent_ckb, created_at, expires_at, status, settled_at, mac_address, ip_address
 		FROM sessions WHERE id = ?
 	`, id)
 
 	s := &Session{}
-	var walletID, channelID, hostAddress sql.NullString
+	var walletID, channelID, hostAddress, macAddr, ipAddr sql.NullString
 	var settledAt sql.NullTime
-	err := row.Scan(&s.ID, &walletID, &channelID, &s.GuestAddress, &hostAddress, &s.FundingCKB, &s.BalanceCKB, &s.SpentCKB, &s.CreatedAt, &s.ExpiresAt, &s.Status, &settledAt)
+	err := row.Scan(&s.ID, &walletID, &channelID, &s.GuestAddress, &hostAddress, &s.FundingCKB, &s.BalanceCKB, &s.SpentCKB, &s.CreatedAt, &s.ExpiresAt, &s.Status, &settledAt, &macAddr, &ipAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -137,20 +145,26 @@ func (db *DB) GetSession(id string) (*Session, error) {
 	if settledAt.Valid {
 		s.SettledAt = &settledAt.Time
 	}
+	if macAddr.Valid {
+		s.MACAddress = macAddr.String
+	}
+	if ipAddr.Valid {
+		s.IPAddress = ipAddr.String
+	}
 	return s, nil
 }
 
 // GetSessionByWalletID retrieves a session by wallet ID.
 func (db *DB) GetSessionByWalletID(walletID string) (*Session, error) {
 	row := db.conn.QueryRow(`
-		SELECT id, wallet_id, channel_id, guest_address, host_address, funding_ckb, balance_ckb, spent_ckb, created_at, expires_at, status, settled_at
+		SELECT id, wallet_id, channel_id, guest_address, host_address, funding_ckb, balance_ckb, spent_ckb, created_at, expires_at, status, settled_at, mac_address, ip_address
 		FROM sessions WHERE wallet_id = ?
 	`, walletID)
 
 	s := &Session{}
-	var wID, channelID, hostAddress sql.NullString
+	var wID, channelID, hostAddress, macAddr, ipAddr sql.NullString
 	var settledAt sql.NullTime
-	err := row.Scan(&s.ID, &wID, &channelID, &s.GuestAddress, &hostAddress, &s.FundingCKB, &s.BalanceCKB, &s.SpentCKB, &s.CreatedAt, &s.ExpiresAt, &s.Status, &settledAt)
+	err := row.Scan(&s.ID, &wID, &channelID, &s.GuestAddress, &hostAddress, &s.FundingCKB, &s.BalanceCKB, &s.SpentCKB, &s.CreatedAt, &s.ExpiresAt, &s.Status, &settledAt, &macAddr, &ipAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +180,12 @@ func (db *DB) GetSessionByWalletID(walletID string) (*Session, error) {
 	if settledAt.Valid {
 		s.SettledAt = &settledAt.Time
 	}
+	if macAddr.Valid {
+		s.MACAddress = macAddr.String
+	}
+	if ipAddr.Valid {
+		s.IPAddress = ipAddr.String
+	}
 	return s, nil
 }
 
@@ -176,12 +196,12 @@ func (db *DB) ListSessions(status string) ([]*Session, error) {
 
 	if status != "" {
 		rows, err = db.conn.Query(`
-			SELECT id, wallet_id, channel_id, guest_address, host_address, funding_ckb, balance_ckb, spent_ckb, created_at, expires_at, status, settled_at
+			SELECT id, wallet_id, channel_id, guest_address, host_address, funding_ckb, balance_ckb, spent_ckb, created_at, expires_at, status, settled_at, mac_address, ip_address
 			FROM sessions WHERE status = ? ORDER BY created_at DESC
 		`, status)
 	} else {
 		rows, err = db.conn.Query(`
-			SELECT id, wallet_id, channel_id, guest_address, host_address, funding_ckb, balance_ckb, spent_ckb, created_at, expires_at, status, settled_at
+			SELECT id, wallet_id, channel_id, guest_address, host_address, funding_ckb, balance_ckb, spent_ckb, created_at, expires_at, status, settled_at, mac_address, ip_address
 			FROM sessions ORDER BY created_at DESC
 		`)
 	}
@@ -193,9 +213,9 @@ func (db *DB) ListSessions(status string) ([]*Session, error) {
 	var sessions []*Session
 	for rows.Next() {
 		s := &Session{}
-		var walletID, channelID, hostAddress sql.NullString
+		var walletID, channelID, hostAddress, macAddr, ipAddr sql.NullString
 		var settledAt sql.NullTime
-		if err := rows.Scan(&s.ID, &walletID, &channelID, &s.GuestAddress, &hostAddress, &s.FundingCKB, &s.BalanceCKB, &s.SpentCKB, &s.CreatedAt, &s.ExpiresAt, &s.Status, &settledAt); err != nil {
+		if err := rows.Scan(&s.ID, &walletID, &channelID, &s.GuestAddress, &hostAddress, &s.FundingCKB, &s.BalanceCKB, &s.SpentCKB, &s.CreatedAt, &s.ExpiresAt, &s.Status, &settledAt, &macAddr, &ipAddr); err != nil {
 			return nil, err
 		}
 		if walletID.Valid {
@@ -210,6 +230,12 @@ func (db *DB) ListSessions(status string) ([]*Session, error) {
 		if settledAt.Valid {
 			s.SettledAt = &settledAt.Time
 		}
+		if macAddr.Valid {
+			s.MACAddress = macAddr.String
+		}
+		if ipAddr.Valid {
+			s.IPAddress = ipAddr.String
+		}
 		sessions = append(sessions, s)
 	}
 	return sessions, nil
@@ -218,6 +244,12 @@ func (db *DB) ListSessions(status string) ([]*Session, error) {
 // UpdateSessionStatus updates the status of a session.
 func (db *DB) UpdateSessionStatus(id, status string) error {
 	_, err := db.conn.Exec(`UPDATE sessions SET status = ? WHERE id = ?`, status, id)
+	return err
+}
+
+// UpdateSessionMAC updates the MAC and IP address of a session.
+func (db *DB) UpdateSessionMAC(id, macAddress, ipAddress string) error {
+	_, err := db.conn.Exec(`UPDATE sessions SET mac_address = ?, ip_address = ? WHERE id = ?`, macAddress, ipAddress, id)
 	return err
 }
 
@@ -243,23 +275,23 @@ func (db *DB) SettleSession(id string) error {
 // CreateGuestWallet inserts a new guest wallet.
 func (db *DB) CreateGuestWallet(w *GuestWallet) error {
 	_, err := db.conn.Exec(`
-		INSERT INTO guest_wallets (id, address, private_key_hex, funding_ckb, balance_ckb, created_at, funded_at, session_id, status, sender_address)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, w.ID, w.Address, w.PrivateKeyHex, w.FundingCKB, w.BalanceCKB, w.CreatedAt, w.FundedAt, w.SessionID, w.Status, w.SenderAddress)
+		INSERT INTO guest_wallets (id, address, private_key_hex, funding_ckb, balance_ckb, created_at, funded_at, session_id, status, sender_address, mac_address, ip_address)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, w.ID, w.Address, w.PrivateKeyHex, w.FundingCKB, w.BalanceCKB, w.CreatedAt, w.FundedAt, w.SessionID, w.Status, w.SenderAddress, w.MACAddress, w.IPAddress)
 	return err
 }
 
 // GetGuestWallet retrieves a guest wallet by ID.
 func (db *DB) GetGuestWallet(id string) (*GuestWallet, error) {
 	row := db.conn.QueryRow(`
-		SELECT id, address, private_key_hex, funding_ckb, balance_ckb, created_at, funded_at, session_id, status, sender_address
+		SELECT id, address, private_key_hex, funding_ckb, balance_ckb, created_at, funded_at, session_id, status, sender_address, mac_address, ip_address
 		FROM guest_wallets WHERE id = ?
 	`, id)
 
 	w := &GuestWallet{}
 	var fundedAt sql.NullTime
-	var sessionID, senderAddr sql.NullString
-	err := row.Scan(&w.ID, &w.Address, &w.PrivateKeyHex, &w.FundingCKB, &w.BalanceCKB, &w.CreatedAt, &fundedAt, &sessionID, &w.Status, &senderAddr)
+	var sessionID, senderAddr, macAddr, ipAddr sql.NullString
+	err := row.Scan(&w.ID, &w.Address, &w.PrivateKeyHex, &w.FundingCKB, &w.BalanceCKB, &w.CreatedAt, &fundedAt, &sessionID, &w.Status, &senderAddr, &macAddr, &ipAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -271,6 +303,12 @@ func (db *DB) GetGuestWallet(id string) (*GuestWallet, error) {
 	}
 	if senderAddr.Valid {
 		w.SenderAddress = senderAddr.String
+	}
+	if macAddr.Valid {
+		w.MACAddress = macAddr.String
+	}
+	if ipAddr.Valid {
+		w.IPAddress = ipAddr.String
 	}
 	return w, nil
 }
@@ -278,14 +316,14 @@ func (db *DB) GetGuestWallet(id string) (*GuestWallet, error) {
 // GetGuestWalletByAddress retrieves a guest wallet by CKB address.
 func (db *DB) GetGuestWalletByAddress(address string) (*GuestWallet, error) {
 	row := db.conn.QueryRow(`
-		SELECT id, address, private_key_hex, funding_ckb, balance_ckb, created_at, funded_at, session_id, status, sender_address
+		SELECT id, address, private_key_hex, funding_ckb, balance_ckb, created_at, funded_at, session_id, status, sender_address, mac_address, ip_address
 		FROM guest_wallets WHERE address = ?
 	`, address)
 
 	w := &GuestWallet{}
 	var fundedAt sql.NullTime
-	var sessionID, senderAddr sql.NullString
-	err := row.Scan(&w.ID, &w.Address, &w.PrivateKeyHex, &w.FundingCKB, &w.BalanceCKB, &w.CreatedAt, &fundedAt, &sessionID, &w.Status, &senderAddr)
+	var sessionID, senderAddr, macAddr, ipAddr sql.NullString
+	err := row.Scan(&w.ID, &w.Address, &w.PrivateKeyHex, &w.FundingCKB, &w.BalanceCKB, &w.CreatedAt, &fundedAt, &sessionID, &w.Status, &senderAddr, &macAddr, &ipAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -298,13 +336,19 @@ func (db *DB) GetGuestWalletByAddress(address string) (*GuestWallet, error) {
 	if senderAddr.Valid {
 		w.SenderAddress = senderAddr.String
 	}
+	if macAddr.Valid {
+		w.MACAddress = macAddr.String
+	}
+	if ipAddr.Valid {
+		w.IPAddress = ipAddr.String
+	}
 	return w, nil
 }
 
 // ListPendingWallets returns wallets waiting for funding.
 func (db *DB) ListPendingWallets() ([]*GuestWallet, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, address, private_key_hex, funding_ckb, balance_ckb, created_at, funded_at, session_id, status, sender_address
+		SELECT id, address, private_key_hex, funding_ckb, balance_ckb, created_at, funded_at, session_id, status, sender_address, mac_address, ip_address
 		FROM guest_wallets WHERE status = 'created' ORDER BY created_at ASC
 	`)
 	if err != nil {
@@ -316,8 +360,8 @@ func (db *DB) ListPendingWallets() ([]*GuestWallet, error) {
 	for rows.Next() {
 		w := &GuestWallet{}
 		var fundedAt sql.NullTime
-		var sessionID, senderAddr sql.NullString
-		if err := rows.Scan(&w.ID, &w.Address, &w.PrivateKeyHex, &w.FundingCKB, &w.BalanceCKB, &w.CreatedAt, &fundedAt, &sessionID, &w.Status, &senderAddr); err != nil {
+		var sessionID, senderAddr, macAddr, ipAddr sql.NullString
+		if err := rows.Scan(&w.ID, &w.Address, &w.PrivateKeyHex, &w.FundingCKB, &w.BalanceCKB, &w.CreatedAt, &fundedAt, &sessionID, &w.Status, &senderAddr, &macAddr, &ipAddr); err != nil {
 			return nil, err
 		}
 		if fundedAt.Valid {
@@ -328,6 +372,12 @@ func (db *DB) ListPendingWallets() ([]*GuestWallet, error) {
 		}
 		if senderAddr.Valid {
 			w.SenderAddress = senderAddr.String
+		}
+		if macAddr.Valid {
+			w.MACAddress = macAddr.String
+		}
+		if ipAddr.Valid {
+			w.IPAddress = ipAddr.String
 		}
 		wallets = append(wallets, w)
 	}
@@ -358,14 +408,14 @@ func (db *DB) UpdateWalletSenderAddress(id, senderAddress string) error {
 // GetWalletBySessionID retrieves a guest wallet by session ID.
 func (db *DB) GetWalletBySessionID(sessionID string) (*GuestWallet, error) {
 	row := db.conn.QueryRow(`
-		SELECT id, address, private_key_hex, funding_ckb, balance_ckb, created_at, funded_at, session_id, status, sender_address
+		SELECT id, address, private_key_hex, funding_ckb, balance_ckb, created_at, funded_at, session_id, status, sender_address, mac_address, ip_address
 		FROM guest_wallets WHERE session_id = ?
 	`, sessionID)
 
 	w := &GuestWallet{}
 	var fundedAt sql.NullTime
-	var sessID, senderAddr sql.NullString
-	err := row.Scan(&w.ID, &w.Address, &w.PrivateKeyHex, &w.FundingCKB, &w.BalanceCKB, &w.CreatedAt, &fundedAt, &sessID, &w.Status, &senderAddr)
+	var sessID, senderAddr, macAddr, ipAddr sql.NullString
+	err := row.Scan(&w.ID, &w.Address, &w.PrivateKeyHex, &w.FundingCKB, &w.BalanceCKB, &w.CreatedAt, &fundedAt, &sessID, &w.Status, &senderAddr, &macAddr, &ipAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -377,6 +427,12 @@ func (db *DB) GetWalletBySessionID(sessionID string) (*GuestWallet, error) {
 	}
 	if senderAddr.Valid {
 		w.SenderAddress = senderAddr.String
+	}
+	if macAddr.Valid {
+		w.MACAddress = macAddr.String
+	}
+	if ipAddr.Valid {
+		w.IPAddress = ipAddr.String
 	}
 	return w, nil
 }

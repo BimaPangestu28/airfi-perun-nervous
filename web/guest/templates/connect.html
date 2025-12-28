@@ -227,10 +227,21 @@
         let pollInterval = null;
         const MIN_FUNDING = 2000; // CKB minimum for Perun channel (channel cell needs significant capacity)
 
+        // MAC and IP from MikroTik captive portal redirect
+        const macAddress = '{{ .macAddress }}';
+        const ipAddress = '{{ .ipAddress }}';
+
         async function init() {
             try {
-                // Request a new guest wallet from backend
-                const resp = await fetch('/api/v1/wallet/guest', { method: 'POST' });
+                // Request a new guest wallet from backend with MAC/IP info
+                const resp = await fetch('/api/v1/wallet/guest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mac_address: macAddress,
+                        ip_address: ipAddress
+                    })
+                });
                 const data = await resp.json();
 
                 if (!resp.ok) {

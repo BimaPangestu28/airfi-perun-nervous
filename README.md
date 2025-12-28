@@ -1,35 +1,67 @@
 # AirFi - WiFi Access via CKB Micropayments
 
-AirFi provides secure, time-limited WiFi access via CKB (Nervos Network) micropayments using Perun state channels for off-chain payments.
+AirFi enables pay-per-use WiFi access using CKB (Nervos Network) micropayments with Perun state channels. Guests pay with cryptocurrency and get instant internet access controlled via OpenWrt/OpenNDS captive portal.
 
 ## Features
 
-- **Generated Guest Wallets**: Automatic keypair generation for each session
-- **On-chain Funding**: Send CKB from any wallet to fund your session
-- **Perun State Channels**: Off-chain micropayments for pay-per-minute billing
-- **Real-time Dashboard**: Live session monitoring with auto-refresh
-- **SQLite Persistence**: Session and wallet history survives restarts
-- **Host Dashboard**: Web-based dashboard with password auth
+- **Crypto-Powered WiFi**: Pay with CKB, get instant internet access
+- **OpenWrt/OpenNDS Integration**: Automatic MAC authorization via captive portal
+- **Perun State Channels**: Off-chain micropayments (no gas per minute)
+- **Auto Wallet Generation**: Temporary CKB wallet for each guest session
+- **JWT Authentication**: Secure token-based WiFi access
+- **Real-time Dashboard**: Live session monitoring for hosts
+- **Auto-Refund**: Remaining CKB returned when session ends
 
 ## Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Guest Portal  │────▶│  Backend Server │────▶│   CKB Testnet   │
-│   (HTML/JS)     │     │    (Golang)     │     │  (via Perun)    │
+│  OpenWrt Router │     │  Backend Server │     │   CKB Testnet   │
+│  (OpenNDS)      │────▶│    (Golang)     │────▶│  (via Perun)    │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
         │                       │
+        │ SSH (ndsctl)          │
+        │◀──────────────────────│
         │                       ▼
         │               ┌─────────────────┐
-        │               │  SQLite DB      │
-        │               │  (airfi.db)     │
-        │               └─────────────────┘
+        ▼               │  SQLite DB      │
+┌─────────────────┐     │  (airfi.db)     │
+│   Guest Device  │     └─────────────────┘
+│   (Browser)     │
+└─────────────────┘
+```
+
+### WiFi Access Flow
+
+```
+Guest connects to WiFi
         │
         ▼
-┌─────────────────┐
-│   Any CKB       │
-│   Wallet        │
-└─────────────────┘
+OpenNDS intercepts traffic
+        │
+        ▼
+Redirect to: http://airfi/?mac=aa:bb:cc:dd:ee:ff&ip=192.168.1.100
+        │
+        ▼
+Guest sends CKB to generated wallet
+        │
+        ▼
+Backend detects payment, opens Perun channel
+        │
+        ▼
+Backend calls: ndsctl auth <mac>
+        │
+        ▼
+Guest gets internet access!
+        │
+        ▼
+Session expires/ends
+        │
+        ▼
+Backend calls: ndsctl deauth <mac>
+        │
+        ▼
+Remaining CKB refunded to guest
 ```
 
 ## Quick Start
@@ -42,77 +74,83 @@ go build -o backend ./cmd/backend
 go build -o hostcli ./cmd/hostcli
 ```
 
-### 2. Run Backend
+### 2. Configure OpenWrt Router
 
 ```bash
+# On OpenWrt router
+opkg update
+opkg install opennds
+
+# Edit /etc/config/opennds
+# Set fasremoteip to your backend server
+# Configure redirect URL to include mac and ip parameters
+```
+
+### 3. Run Backend
+
+```bash
+# With OpenWrt router
+export OPENWRT_ADDRESS=192.168.1.1
+export OPENWRT_PASSWORD=your_router_password
+./backend
+
+# Without router (testing mode)
 ./backend
 ```
 
-Backend starts on `http://localhost:8080` with:
-- SQLite database at `./airfi.db`
-- JWT keys at `./keys/`
-
-### 3. Run Host CLI Dashboard
-
-```bash
-./hostcli dashboard
-```
-
-Shows real-time session monitoring with auto-refresh every 2 seconds.
+Backend starts on `http://localhost:8080`
 
 ### 4. Access Web Portal
 
 | URL | Description |
 |-----|-------------|
 | `http://localhost:8080/` | Guest landing page |
-| `http://localhost:8080/connect` | Buy WiFi page (generates wallet) |
+| `http://localhost:8080/connect` | Buy WiFi page |
 | `http://localhost:8080/dashboard` | Host dashboard (password: `airfi2025`) |
-
-## Payment Flow
-
-### Guest Flow
-
-1. Guest opens `/connect` page
-2. Backend generates a temporary CKB wallet
-3. Guest sees QR code with wallet address
-4. Guest sends CKB from any wallet (JoyID, Neuron, etc.)
-5. Backend detects funding, creates session
-6. Perun channel opens automatically
-7. WiFi activates, 1 CKB = 1 minute
-
-```
-┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-│   Guest     │         │   Backend   │         │   CKB Node  │
-└─────────────┘         └─────────────┘         └─────────────┘
-      │                       │                       │
-      │   GET /connect        │                       │
-      │──────────────────────▶│                       │
-      │   (generate wallet)   │                       │
-      │◀──────────────────────│                       │
-      │                       │                       │
-      │   Send CKB to address │                       │
-      │───────────────────────────────────────────────▶
-      │                       │                       │
-      │   Poll wallet status  │   Check balance       │
-      │──────────────────────▶│──────────────────────▶│
-      │                       │   (funded)            │
-      │   session created     │◀──────────────────────│
-      │◀──────────────────────│                       │
-      │                       │                       │
-      │   Redirect to /session/xxx                    │
-      │                                               │
-```
 
 ## Pricing
 
 | Amount | Duration |
 |--------|----------|
-| 150 CKB | ~2.5 hours |
-| 200 CKB | ~3+ hours |
-| 300 CKB | ~5 hours |
-| Custom | 1 CKB = 1 minute |
+| 2000 CKB | ~1 hour |
+| 4000 CKB | ~2 hours |
+| 6000 CKB | ~3 hours |
 
-Minimum: 150 CKB (includes channel funding + transaction fees)
+**Rate**: ~8.33 CKB per minute (500 CKB per hour usable after channel setup)
+
+**Minimum**: 2000 CKB (includes ~1500 CKB for Perun channel setup)
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8080` | Server port |
+| `HOST_PRIVATE_KEY` | (demo key) | Host wallet private key (hex) |
+| `DASHBOARD_PASSWORD` | `airfi2025` | Dashboard login password |
+| `DB_PATH` | `./airfi.db` | SQLite database path |
+
+### OpenWrt/OpenNDS Router
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENWRT_ADDRESS` | - | Router IP (required to enable) |
+| `OPENWRT_PORT` | `22` | SSH port |
+| `OPENWRT_USERNAME` | `root` | SSH username |
+| `OPENWRT_PASSWORD` | - | SSH password |
+| `OPENWRT_PRIVATE_KEY` | - | SSH private key (alternative) |
+| `OPENWRT_AUTH_TIMEOUT` | `0` | Session timeout (0 = OpenNDS default) |
+
+### Example
+
+```bash
+export PORT=8080
+export DASHBOARD_PASSWORD=mysecretpassword
+export OPENWRT_ADDRESS=192.168.1.1
+export OPENWRT_PASSWORD=routerpass
+./backend
+```
 
 ## API Endpoints
 
@@ -131,13 +169,13 @@ Minimum: 150 CKB (includes channel funding + transaction fees)
 | `GET /api/v1/sessions/:id` | GET | Get session info |
 | `GET /api/v1/sessions/:id/token` | GET | Get JWT access token |
 | `POST /api/v1/sessions/:id/end` | POST | End session, settle channel |
+| `POST /api/v1/sessions/:id/extend` | POST | Micropayment extension |
 
-### Perun Channels
+### Authentication
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `POST /api/v1/channels/open` | POST | Open payment channel |
-| `POST /api/v1/sessions/:id/extend` | POST | Micropayment extension |
+| `POST /api/v1/auth/validate` | POST | Validate JWT token |
 
 ### System
 
@@ -152,14 +190,17 @@ Minimum: 150 CKB (includes channel funding + transaction fees)
 # Interactive dashboard with real-time updates
 ./hostcli dashboard
 
-# Display QR code
+# Display QR code for guest portal
 ./hostcli qr
 
-# List sessions
+# List all sessions
 ./hostcli sessions
 
 # Watch sessions (auto-refresh)
 ./hostcli sessions watch
+
+# Get JWT token for a session
+./hostcli token <session-id>
 
 # System status
 ./hostcli status
@@ -167,29 +208,11 @@ Minimum: 150 CKB (includes channel funding + transaction fees)
 # Wallet info
 ./hostcli wallet
 
-# Settle channel
+# Settle channel manually
 ./hostcli settle <session-id>
 
 # Custom API URL
 ./hostcli --api http://192.168.1.100:8080 dashboard
-```
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8080` | Server port |
-| `HOST_PRIVATE_KEY` | (demo key) | Host wallet private key |
-| `DASHBOARD_PASSWORD` | `airfi2025` | Dashboard login password |
-
-### Example
-
-```bash
-export PORT=8080
-export DASHBOARD_PASSWORD=mysecretpassword
-./backend
 ```
 
 ## Project Structure
@@ -197,19 +220,19 @@ export DASHBOARD_PASSWORD=mysecretpassword
 ```
 airfi-perun-nervous/
 ├── cmd/
-│   ├── backend/        # Backend server
-│   └── hostcli/        # Host CLI tool
+│   ├── backend/          # Backend server
+│   └── hostcli/          # Host CLI tool
 ├── internal/
-│   ├── auth/           # JWT authentication
-│   ├── db/             # SQLite database
-│   ├── guest/          # Guest wallet generation
-│   └── perun/          # Perun channel integration
+│   ├── auth/             # JWT authentication
+│   ├── db/               # SQLite database
+│   ├── guest/            # Guest wallet generation
+│   ├── perun/            # Perun channel integration
+│   └── router/           # WiFi router control (OpenWrt)
 ├── web/guest/
-│   ├── static/         # CSS, JS assets
-│   └── templates/      # HTML templates
-├── config/             # Configuration files
-├── keys/               # JWT keys (auto-generated)
-└── airfi.db            # SQLite database (auto-created)
+│   ├── static/           # CSS, JS assets
+│   └── templates/        # HTML templates
+├── keys/                 # JWT keys (auto-generated)
+└── airfi.db              # SQLite database (auto-created)
 ```
 
 ## Database Schema
@@ -229,7 +252,9 @@ CREATE TABLE sessions (
     created_at DATETIME,
     expires_at DATETIME,
     status TEXT DEFAULT 'pending_funding',
-    settled_at DATETIME
+    settled_at DATETIME,
+    mac_address TEXT,
+    ip_address TEXT
 );
 ```
 
@@ -245,15 +270,64 @@ CREATE TABLE guest_wallets (
     created_at DATETIME,
     funded_at DATETIME,
     session_id TEXT,
-    status TEXT DEFAULT 'created'
+    status TEXT DEFAULT 'created',
+    sender_address TEXT,
+    mac_address TEXT,
+    ip_address TEXT
 );
+```
+
+## Session Status Flow
+
+```
+created → funded → channel_opening → active → settled
+                                        ↓
+                                     expired
+```
+
+- **created**: Wallet generated, waiting for CKB
+- **funded**: CKB received, opening channel
+- **channel_opening**: Perun channel being set up
+- **active**: WiFi access granted (MAC authorized)
+- **expired**: Time ran out, auto-settled
+- **settled**: Channel closed, CKB refunded
+
+## OpenWrt/OpenNDS Setup
+
+### Install OpenNDS
+
+```bash
+opkg update
+opkg install opennds
+```
+
+### Configure OpenNDS
+
+Edit `/etc/config/opennds`:
+
+```
+config opennds
+    option enabled '1'
+    option gatewayinterface 'br-lan'
+    option fasport '80'
+    option fasremoteip '192.168.1.100'  # Your backend server
+    option faspath '/connect'
+    option fas_secure_enabled '0'
+```
+
+### Configure Redirect with MAC/IP
+
+OpenNDS will redirect guests to:
+```
+http://192.168.1.100/connect?mac=$clientmac&ip=$clientip
 ```
 
 ## Technology Stack
 
-- **Backend**: Go 1.21+, Gin, SQLite
+- **Backend**: Go 1.22+, Gin, SQLite
 - **Blockchain**: Nervos CKB Testnet
 - **State Channels**: Perun Network
+- **Router**: OpenWrt with OpenNDS
 - **Frontend**: HTML, CSS, JavaScript
 
 ### Dependencies
@@ -263,29 +337,37 @@ github.com/nervosnetwork/ckb-sdk-go/v2  # CKB SDK
 github.com/gin-gonic/gin                 # HTTP framework
 github.com/mattn/go-sqlite3              # SQLite driver
 github.com/golang-jwt/jwt/v5             # JWT
-github.com/mdp/qrterminal/v3             # QR code terminal
+golang.org/x/crypto/ssh                  # SSH for router control
 go.uber.org/zap                          # Logging
 perun.network/go-perun                   # State channels
-github.com/decred/dcrd/dcrec/secp256k1   # Keypair generation
 ```
 
 ## Testing
 
-### Manual Test Flow
+### Without Router (Mock Mode)
 
 ```bash
-# Terminal 1: Start backend
+# Start backend without OPENWRT_ADDRESS
 ./backend
 
-# Terminal 2: Run CLI dashboard
-./hostcli dashboard
-
-# Browser: Open guest portal
+# Open browser
 open http://localhost:8080/connect
 
-# Copy the generated wallet address
-# Send CKB from testnet faucet or any wallet
-# Watch the session appear in CLI when funded
+# Send CKB to the generated wallet address
+# Session activates automatically
+```
+
+### With Router
+
+```bash
+# Configure router
+export OPENWRT_ADDRESS=192.168.1.1
+export OPENWRT_PASSWORD=routerpass
+./backend
+
+# Connect device to WiFi
+# OpenNDS redirects to portal
+# Pay and get internet access
 ```
 
 ### API Tests
@@ -294,7 +376,7 @@ open http://localhost:8080/connect
 # Health check
 curl http://localhost:8080/health
 
-# Wallet status
+# Host wallet status
 curl http://localhost:8080/api/v1/wallet
 
 # List sessions
@@ -305,6 +387,9 @@ curl -X POST http://localhost:8080/api/v1/wallet/guest
 
 # Check wallet status
 curl http://localhost:8080/api/v1/wallet/guest/<wallet_id>
+
+# Get session token
+curl http://localhost:8080/api/v1/sessions/<session_id>/token
 ```
 
 ## CKB Testnet Resources
@@ -312,14 +397,6 @@ curl http://localhost:8080/api/v1/wallet/guest/<wallet_id>
 - **Explorer**: https://pudge.explorer.nervos.org
 - **Faucet**: https://faucet.nervos.org
 - **Documentation**: https://docs.nervos.org
-
-## Session Status Flow
-
-```
-created → funded → channel_open → active → settled
-                                     ↓
-                                  expired
-```
 
 ## License
 
@@ -329,4 +406,6 @@ MIT License
 
 - [Nervos CKB](https://nervos.org)
 - [Perun Network](https://perun.network)
+- [OpenNDS](https://github.com/openNDS/openNDS)
+- [OpenWrt](https://openwrt.org)
 - [Catalyst Labs](https://catalystlabs.id)
