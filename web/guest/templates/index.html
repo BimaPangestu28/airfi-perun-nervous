@@ -55,9 +55,64 @@
         .cta-section {
             margin-top: 2rem;
         }
+        /* Toast notifications - compact top right */
+        .toast-container {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            pointer-events: none;
+            max-width: 320px;
+        }
+        .toast {
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            animation: slideIn 0.3s ease;
+            pointer-events: auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 0.875rem;
+        }
+        .toast.success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #10b981;
+        }
+        .toast-icon {
+            flex-shrink: 0;
+            width: 18px;
+            height: 18px;
+        }
+        .toast-content {
+            flex: 1;
+            line-height: 1.3;
+        }
+        .toast-title {
+            font-weight: 600;
+        }
+        .toast-message {
+            font-size: 0.8rem;
+            opacity: 0.85;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
     </style>
 </head>
 <body>
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
     <div class="container">
         {{ if .error }}
         <div class="notice" style="background: var(--danger-muted); border: 1px solid var(--danger); margin-top: 24px;">
@@ -189,6 +244,48 @@
         }
 
         loadPricing();
+
+        // Check for saved toast from session page
+        function checkSavedToast() {
+            const saved = localStorage.getItem('airfi_toast');
+            if (saved) {
+                try {
+                    const toast = JSON.parse(saved);
+                    // Only show if less than 10 seconds old
+                    if (Date.now() - toast.timestamp < 10000) {
+                        showToast(toast.type, toast.title, toast.message);
+                    }
+                } catch (e) {}
+                localStorage.removeItem('airfi_toast');
+            }
+        }
+
+        function showToast(type, title, message, duration = 5000) {
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+
+            const icon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+
+            toast.innerHTML = `
+                <div class="toast-icon">${icon}</div>
+                <div class="toast-content">
+                    <span class="toast-title">${title}</span>
+                    ${message ? `<span class="toast-message"> - ${message}</span>` : ''}
+                </div>
+            `;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s ease forwards';
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        checkSavedToast();
     </script>
 </body>
 </html>

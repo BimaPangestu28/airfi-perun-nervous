@@ -93,7 +93,13 @@ func (s *Server) handleGetGuestWallet(c *gin.Context) {
 			balanceCKB := balance / 100000000
 
 			if balanceCKB >= minimumCKB {
-				// Sufficient funding - create session
+				// Detect sender address IMMEDIATELY before any channel operations
+				senderAddr := s.detectSenderAddressSync(c.Request.Context(), wallet.Address)
+				if senderAddr != "" {
+					s.db.UpdateWalletSenderAddress(walletID, senderAddr)
+				}
+
+				// Create session
 				sessionID := s.createSessionFromWallet(wallet, balanceCKB)
 
 				s.db.UpdateWalletFunded(walletID, balanceCKB, sessionID)
@@ -184,8 +190,15 @@ func (s *Server) checkPendingWallets(ctx context.Context) {
 		balanceCKB := balance / 100000000
 
 		if balanceCKB >= minimumCKB {
-			// Sufficient funding - create session
-			go s.detectAndSaveSenderAddress(wallet.ID, wallet.Address)
+			// Detect sender address IMMEDIATELY before any channel operations
+			senderAddr := s.detectSenderAddressSync(ctx, wallet.Address)
+			if senderAddr != "" {
+				s.db.UpdateWalletSenderAddress(wallet.ID, senderAddr)
+				s.logger.Info("sender address saved",
+					zap.String("wallet_id", wallet.ID),
+					zap.String("sender_address", senderAddr),
+				)
+			}
 
 			sessionID := s.createSessionFromWallet(wallet, balanceCKB)
 			if sessionID != "" {
@@ -224,35 +237,19 @@ func (s *Server) checkPendingWallets(ctx context.Context) {
 	}
 }
 
-// detectAndSaveSenderAddress detects the sender address with retries.
-func (s *Server) detectAndSaveSenderAddress(walletID, walletAddress string) {
+// detectSenderAddressSync detects the sender address synchronously.
+// Must be called BEFORE any Perun channel operations to get the correct sender.
+func (s *Server) detectSenderAddressSync(ctx context.Context, walletAddress string) string {
 	withdrawer := perun.NewWithdrawer(s.ckbClient, s.logger.Named("withdrawer"))
 
-	delays := []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
-
-	for i, delay := range delays {
-		time.Sleep(delay)
-
-		senderAddr, err := withdrawer.GetSenderAddress(context.Background(), walletAddress, types.NetworkTest)
-		if err != nil {
-			s.logger.Warn("sender detection attempt failed",
-				zap.String("wallet_id", walletID),
-				zap.Int("attempt", i+1),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		s.db.UpdateWalletSenderAddress(walletID, senderAddr)
-		s.logger.Info("sender address detected and saved",
-			zap.String("wallet_id", walletID),
-			zap.String("sender_address", senderAddr),
-			zap.Int("attempt", i+1),
+	senderAddr, err := withdrawer.GetSenderAddress(ctx, walletAddress, types.NetworkTest)
+	if err != nil {
+		s.logger.Warn("sender detection failed",
+			zap.String("wallet", walletAddress),
+			zap.Error(err),
 		)
-		return
+		return ""
 	}
 
-	s.logger.Error("failed to detect sender address after all retries",
-		zap.String("wallet_id", walletID),
-	)
+	return senderAddr
 }

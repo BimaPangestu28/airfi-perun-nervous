@@ -63,9 +63,196 @@
             background: #d1fae5;
             color: #065f46;
         }
+        /* Toast notifications - compact top right */
+        .toast-container {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            pointer-events: none;
+            max-width: 320px;
+        }
+        .toast {
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            animation: slideIn 0.3s ease;
+            pointer-events: auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 0.875rem;
+        }
+        .toast.success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #10b981;
+        }
+        .toast.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #ef4444;
+        }
+        .toast.info {
+            background: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #3b82f6;
+        }
+        .toast.warning {
+            background: #fef3c7;
+            color: #92400e;
+            border: 1px solid #f59e0b;
+        }
+        .toast-icon {
+            flex-shrink: 0;
+            width: 18px;
+            height: 18px;
+        }
+        .toast-content {
+            flex: 1;
+            line-height: 1.3;
+        }
+        .toast-title {
+            font-weight: 600;
+        }
+        .toast-message {
+            font-size: 0.8rem;
+            opacity: 0.85;
+        }
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        .progress-percent {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #10b981;
+        }
+        @keyframes slideIn {
+            from { transform: translateY(-100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes slideOut {
+            from { transform: translateY(0); opacity: 1; }
+            to { transform: translateY(-100%); opacity: 0; }
+        }
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1001;
+            padding: 1rem;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s, visibility 0.2s;
+        }
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        .modal {
+            background: white;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 400px;
+            transform: scale(0.95);
+            transition: transform 0.2s;
+        }
+        .modal-overlay.active .modal {
+            transform: scale(1);
+        }
+        .modal-header {
+            padding: 1.25rem 1.25rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .modal-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .modal-icon.danger {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+        .modal-icon.warning {
+            background: #fef3c7;
+            color: #d97706;
+        }
+        .modal-icon svg {
+            width: 20px;
+            height: 20px;
+        }
+        .modal-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: #0a0a0a;
+        }
+        .modal-body {
+            padding: 1rem 1.25rem;
+            color: #525252;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        .modal-footer {
+            padding: 1rem 1.25rem 1.25rem;
+            display: flex;
+            gap: 0.75rem;
+        }
+        .modal-footer .btn {
+            flex: 1;
+        }
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #525252;
+            border: 1px solid #e5e5e5;
+        }
+        .btn-secondary:hover {
+            background: #e5e5e5;
+        }
     </style>
 </head>
 <body>
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Confirmation Modal -->
+    <div id="modal-overlay" class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-icon" id="modal-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                </div>
+                <div class="modal-title" id="modal-title">Confirm Action</div>
+            </div>
+            <div class="modal-body" id="modal-body">
+                Are you sure you want to proceed?
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" id="modal-confirm-btn" onclick="confirmModal()">Confirm</button>
+            </div>
+        </div>
+    </div>
+
     <div class="container">
         <header class="header compact" style="display: flex; justify-content: space-between; align-items: center;">
             <div class="logo">Your Session</div>
@@ -86,22 +273,25 @@
             <section class="card">
                 <div class="balance-grid">
                     <div class="balance-item">
-                        <div class="balance-value" id="balance-ckb">{{ .session.BalanceCKB }}</div>
+                        <div class="balance-value" id="balance-ckb">--</div>
                         <div class="balance-label">Balance (CKB)</div>
                     </div>
                     <div class="balance-item">
-                        <div class="balance-value" id="spent-ckb">{{ .session.SpentCKB }}</div>
+                        <div class="balance-value" id="spent-ckb">--</div>
                         <div class="balance-label">Spent (CKB)</div>
                     </div>
                     <div class="balance-item">
-                        <div class="balance-value" id="funding-ckb">{{ .session.FundingCKB }}</div>
+                        <div class="balance-value" id="funding-ckb">--</div>
                         <div class="balance-label">Funded (CKB)</div>
                     </div>
+                </div>
+                <div class="progress-info">
+                    <span class="rate-info" id="rate-info">Loading rate...</span>
+                    <span class="progress-percent" id="progress-percent">--%</span>
                 </div>
                 <div class="progress-bar">
                     <div class="progress-fill" id="progress-fill" style="width: 100%;"></div>
                 </div>
-                <div class="rate-info" id="rate-info">Loading rate...</div>
             </section>
 
             <!-- Channel Info -->
@@ -169,6 +359,76 @@
         let remainingSeconds = 0;
         let ratePerHour = 500; // Default, fetched from API
         let ratePerMin = 0;
+        let modalCallback = null;
+
+        // Toast notification system (compact)
+        function showToast(type, title, message, duration = 4000) {
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+
+            const icons = {
+                success: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+                error: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+                info: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+                warning: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+            };
+
+            // Compact format: title - message on same line
+            toast.innerHTML = `
+                <div class="toast-icon">${icons[type]}</div>
+                <div class="toast-content">
+                    <span class="toast-title">${title}</span>
+                    ${message ? `<span class="toast-message"> - ${message}</span>` : ''}
+                </div>
+            `;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s ease forwards';
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        // Save toast to localStorage for cross-page display
+        function saveToastForLanding(type, title, message) {
+            localStorage.setItem('airfi_toast', JSON.stringify({ type, title, message, timestamp: Date.now() }));
+        }
+
+        // Modal confirmation system
+        function showModal(options) {
+            const overlay = document.getElementById('modal-overlay');
+            const icon = document.getElementById('modal-icon');
+            const title = document.getElementById('modal-title');
+            const body = document.getElementById('modal-body');
+            const confirmBtn = document.getElementById('modal-confirm-btn');
+
+            icon.className = `modal-icon ${options.type || 'warning'}`;
+            title.textContent = options.title || 'Confirm Action';
+            body.textContent = options.message || 'Are you sure?';
+            confirmBtn.textContent = options.confirmText || 'Confirm';
+            confirmBtn.className = `btn ${options.type === 'danger' ? 'btn-danger' : 'btn-primary'}`;
+
+            modalCallback = options.onConfirm;
+            overlay.classList.add('active');
+        }
+
+        function closeModal(event) {
+            if (event && event.target !== event.currentTarget) return;
+            document.getElementById('modal-overlay').classList.remove('active');
+            modalCallback = null;
+        }
+
+        function confirmModal() {
+            document.getElementById('modal-overlay').classList.remove('active');
+            if (modalCallback) {
+                modalCallback();
+                modalCallback = null;
+            }
+        }
 
         // Fetch settings and update UI
         async function loadSettings() {
@@ -272,15 +532,27 @@
                         document.getElementById('time-remaining').textContent = formatSeconds(remainingSeconds);
                     }
 
-                    // Update balances
-                    document.getElementById('balance-ckb').textContent = data.balance_ckb;
-                    document.getElementById('spent-ckb').textContent = data.spent_ckb;
-                    document.getElementById('funding-ckb').textContent = data.funding_ckb;
+                    // Update balances (show 2 decimal places)
+                    document.getElementById('balance-ckb').textContent = Number(data.balance_ckb).toFixed(2);
+                    document.getElementById('spent-ckb').textContent = Number(data.spent_ckb).toFixed(2);
+                    document.getElementById('funding-ckb').textContent = Number(data.funding_ckb).toFixed(2);
 
                     // Update progress bar (balance relative to usable amount)
                     const usableTotal = data.balance_ckb + data.spent_ckb;
                     const progress = usableTotal > 0 ? (data.balance_ckb / usableTotal) * 100 : 0;
-                    document.getElementById('progress-fill').style.width = Math.max(0, Math.min(100, progress)) + '%';
+                    const progressClamped = Math.max(0, Math.min(100, progress));
+                    document.getElementById('progress-fill').style.width = progressClamped + '%';
+                    document.getElementById('progress-percent').textContent = progressClamped.toFixed(0) + '%';
+
+                    // Change color based on remaining
+                    const percentEl = document.getElementById('progress-percent');
+                    if (progressClamped < 20) {
+                        percentEl.style.color = '#ef4444';
+                    } else if (progressClamped < 50) {
+                        percentEl.style.color = '#f59e0b';
+                    } else {
+                        percentEl.style.color = '#10b981';
+                    }
 
                     // Update channel status
                     const channelStatus = document.getElementById('channel-status');
@@ -354,12 +626,17 @@
             }
         }
 
-        window.endSession = async function() {
-            if (!confirm('End your session and disconnect?\n\nYour remaining CKB will be returned to your wallet.')) {
-                return;
-            }
+        window.endSession = function() {
+            showModal({
+                type: 'danger',
+                title: 'End Session?',
+                message: 'Your WiFi access will be disconnected and remaining CKB will be returned to your wallet.',
+                confirmText: 'Disconnect',
+                onConfirm: doEndSession
+            });
+        }
 
-            // Show loader briefly
+        async function doEndSession() {
             const btn = document.getElementById('settle-btn');
             const text = document.getElementById('settle-text');
             const loader = document.getElementById('settle-loader');
@@ -367,6 +644,8 @@
             btn.disabled = true;
             text.classList.add('hidden');
             loader.classList.remove('hidden');
+
+            showToast('info', 'Disconnecting...', 'Please wait while we process your request.');
 
             try {
                 const response = await fetch('/api/v1/sessions/' + sessionId + '/end', {
@@ -379,14 +658,18 @@
                     clearInterval(pollInterval);
                     clearInterval(countdownInterval);
                     isActive = false;
-                    // Redirect immediately - settlement happens in background
+
+                    // Save toast to show on landing page
+                    saveToastForLanding('success', 'Disconnected', 'Refund will be sent to your wallet shortly.');
+
+                    // Redirect immediately
                     window.location.href = '/';
                 } else {
                     throw new Error(data.error || 'Failed to end session');
                 }
             } catch (error) {
                 console.error('End session error:', error);
-                alert('Error: ' + error.message);
+                showToast('error', 'Error', error.message);
 
                 // Reset button
                 btn.disabled = false;
@@ -395,22 +678,25 @@
             }
         }
 
-        window.extendSession = async function(minutes) {
-            // Calculate CKB amount based on rate
+        window.extendSession = function(minutes) {
             const ckbAmount = Math.ceil((ratePerHour / 60) * minutes);
 
-            if (!confirm(`Extend session by ${minutes} minutes for ${ckbAmount} CKB?\n\nThis will be deducted from your channel balance.`)) {
-                return;
-            }
+            showModal({
+                type: 'warning',
+                title: `Add ${minutes} Minutes?`,
+                message: `${ckbAmount} CKB will be deducted from your channel balance.`,
+                confirmText: `Pay ${ckbAmount} CKB`,
+                onConfirm: () => doExtendSession(minutes, ckbAmount)
+            });
+        }
 
+        async function doExtendSession(minutes, ckbAmount) {
             const statusEl = document.getElementById('extend-status');
             const extendSection = document.getElementById('extend-section');
             const buttons = extendSection.querySelectorAll('.quick-btn');
 
-            // Disable buttons
             buttons.forEach(btn => btn.disabled = true);
 
-            // Show loading
             statusEl.classList.remove('hidden');
             statusEl.innerHTML = '<div style="display: inline-flex; align-items: center; gap: 8px;"><div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>Processing payment...</div>';
             statusEl.style.color = '#737373';
@@ -425,21 +711,17 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    statusEl.innerHTML = `<span style="color: #10b981;">✓ Added ${data.additional_minutes} minutes!</span>`;
-                    // Update session immediately
+                    statusEl.classList.add('hidden');
+                    showToast('success', 'Time Added!', `+${data.additional_minutes} minutes added to your session.`);
                     updateSession();
-                    // Hide status after 3 seconds
-                    setTimeout(() => {
-                        statusEl.classList.add('hidden');
-                    }, 3000);
                 } else {
                     throw new Error(data.error || 'Failed to extend session');
                 }
             } catch (error) {
                 console.error('Extend session error:', error);
-                statusEl.innerHTML = `<span style="color: #ef4444;">Error: ${error.message}</span>`;
+                statusEl.classList.add('hidden');
+                showToast('error', 'Payment Failed', error.message);
             } finally {
-                // Re-enable buttons
                 buttons.forEach(btn => btn.disabled = false);
             }
         }
